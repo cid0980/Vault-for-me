@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    name: Core suites (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # includes: util · crypto · github adapter (mock API) · vault · bundle integrity
+      - run: node tools/run-tests.mjs
+
+  bundle-is-fresh:
+    name: Single-file build is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node tools/bundle.mjs
+      - name: Fail if repovault.html differs from a fresh build
+        run: |
+          if ! git diff --quiet -- repovault.html; then
+            echo "::error::repovault.html is stale. Run 'npm run build' and commit the result."
+            git --no-pager diff --stat -- repovault.html
+            exit 1
+          fi
+          echo "repovault.html matches a fresh build ✓"

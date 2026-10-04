@@ -3,6 +3,7 @@
  * These cover the paths that actually break in the wild: empty repos, sha
  * requirements on overwrite, the 100 MB wall, rate limits and ref races.
  */
+import './helpers/webcrypto.mjs'; // must come first: installs the crypto global on Node 18
 import assert from 'node:assert/strict';
 import { GitHubAdapter } from '../app/adapters/github.js';
 import { withRetry, b64decode } from '../app/core/util.js';

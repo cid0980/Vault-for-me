@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL: Actions-based deploy instead of the default branch deploy.
+# To use it: move this file to .github/workflows/pages.yml, then set
+#   Settings → Pages → Source: GitHub Actions
+# Do NOT enable both at once — a branch deploy and an Actions deploy on the
+# same repo fight over the site and the workflow will fail on every push.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Tests + fresh bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node tools/run-tests.mjs
+      - run: node tools/bundle.mjs
+
+  deploy:
+    name: Publish static site
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .            # repo root *is* the site: index.html + app/ + icons/
+      - id: deployment
+        uses: actions/deploy-pages@v4

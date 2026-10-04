@@ -146,7 +146,7 @@ npm run build                  # refreshes repovault.html
 npm run dev                    # http://localhost:8000
 ```
 
-**GitHub Pages** (recommended — same platform as your storage): push to `main`, then *Settings → Pages → Source: **Deploy from a branch** → branch `main`, folder `/ (root)`*. It goes live at `https://cid0980.github.io/Vault-for-me/` — bookmark that on your phone and your repo is a drive you can reach from anywhere. (Prefer CI-driven deploys? The repo's `test.yml` workflow runs the 56-test suite on every push; pushing workflows needs a token with **Workflows: Read and write**, which is why they are kept out of the first commit.)
+**GitHub Pages** (recommended — same platform as your storage): push to `main`, then *Settings → Pages → Source: **Deploy from a branch** → branch `main`, folder `/ (root)`*. It goes live at `https://cid0980.github.io/Vault-for-me/` — bookmark that on your phone and your repo is a drive you can reach from anywhere. (Prefer CI-driven deploys? The repo's `test.yml` workflow runs the 56-test suite on every push; pushing workflows needs a token with **Workflows: Read and write**, which is why they are kept out of the first commit.) Want Actions-based deploys instead? Move `docs/actions-pages-workflow.yml` to `.github/workflows/pages.yml` and set Pages → Source: GitHub Actions.
 
 **Netlify / Cloudflare Pages:** drag the folder in (no build command, publish dir `/`); `_headers` adds a strict CSP.
 

@@ -2,6 +2,7 @@
  * Helper tests — path handling, naming collisions and retry behaviour.
  * Boring, but this is where "it silently overwrote my file" bugs live.
  */
+import './helpers/webcrypto.mjs'; // must come first: installs the crypto global on Node 18
 import assert from 'node:assert/strict';
 import {
   formatBytes, normalizePath, joinPath, dirName, baseName, extOf, encodePath,

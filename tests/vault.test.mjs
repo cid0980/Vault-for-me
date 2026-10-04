@@ -3,6 +3,7 @@
  * and describe exactly what the UI does: upload → list → search → preview →
  * rename → delete, with and without encryption.
  */
+import './helpers/webcrypto.mjs'; // must come first: installs the crypto global on Node 18
 import assert from 'node:assert/strict';
 import { Vault, SALT_PATH, ENC_SUFFIX } from '../app/core/vault.js';
 import { MemoryAdapter } from '../app/adapters/memory.js';

@@ -2,6 +2,7 @@
  * Encryption tests — the format is the contract, so these assert byte-level
  * behaviour: magic bytes, chunk independence, tamper detection, ordering.
  */
+import './helpers/webcrypto.mjs'; // must come first: installs the crypto global on Node 18
 import assert from 'node:assert/strict';
 import { deriveVaultKey, encryptBytes, decryptBytes, isEncryptedBytes, peekHeader, randomBytes } from '../app/core/crypto.js';
 

@@ -6,6 +6,7 @@
  * it in a DOM-less VM, proving that the flattened modules still expose working
  * crypto and a working vault — not just that they parse.
  */
+import './helpers/webcrypto.mjs'; // must come first: installs the crypto global on Node 18
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
