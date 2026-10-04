@@ -1,0 +1,28 @@
+{
+  "name": "repovault",
+  "version": "1.0.0",
+  "description": "Turn a GitHub repo into personal cloud storage: a static site with no backend and no database that uploads, previews, shares and client-side-encrypts any file.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node tools/run-tests.mjs",
+    "build": "node tools/bundle.mjs",
+    "dev": "python3 -m http.server 8000",
+    "check": "node tools/bundle.mjs && node tools/run-tests.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "github-as-storage",
+    "cloud-storage",
+    "serverless",
+    "static-site",
+    "webcrypto",
+    "aes-gcm",
+    "file-upload",
+    "git-data-api",
+    "zero-backend"
+  ]
+}

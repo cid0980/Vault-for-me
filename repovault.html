@@ -1,0 +1,2431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>RepoVault — your GitHub repo as unlimited cloud storage</title>
+<meta name="description" content="Upload images, videos, PDFs — any file — straight into a GitHub repo from the browser. No backend, no database, no server bill. Encrypt before upload if the repo is public." />
+<meta name="theme-color" content="#0b1020" />
+<meta name="color-scheme" content="dark" />
+<meta property="og:title" content="RepoVault — your GitHub repo as cloud storage" />
+<meta property="og:description" content="A static website that turns a git repo into a personal drive: upload, preview, share, encrypt. Zero backend." />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2322d3ee'/%3E%3Cstop offset='.55' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%23a855f7'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='512' height='512' rx='118' fill='%230b1020'/%3E%3Crect x='18' y='18' width='476' height='476' rx='103' fill='none' stroke='url(%23g)' stroke-width='14' opacity='.5'/%3E%3Crect x='96' y='86' width='320' height='340' rx='44' fill='none' stroke='url(%23g)' stroke-width='26'/%3E%3Ccircle cx='256' cy='256' r='62' fill='none' stroke='url(%23g)' stroke-width='24'/%3E%3Ccircle cx='256' cy='256' r='14' fill='url(%23g)'/%3E%3Cpath d='M256 158v36M256 318v36M158 256h36M318 256h36' stroke='url(%23g)' stroke-width='22' stroke-linecap='round'/%3E%3C/svg%3E" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  :root{
+    --bg:#080b18; --card:rgba(19,25,48,.72); --card-solid:#121834;
+    --line:rgba(148,178,255,.14); --line-2:rgba(148,178,255,.28);
+    --ink:#e8ecff; --ink-2:#a3aed6; --ink-3:#6f7aa8;
+    --cy:#22d3ee; --in:#6366f1; --pu:#a855f7;
+    --grad:linear-gradient(135deg,#22d3ee 0%,#6366f1 55%,#a855f7 100%);
+    --ok:#34d399; --warn:#fbbf24; --bad:#fb7185;
+    --r:16px; --r-sm:11px;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;
+    --shadow:0 24px 60px -22px rgba(0,0,0,.85);
+  }
+  html,body{margin:0;height:100%}
+  body{font-family:var(--sans);color:var(--ink);background:var(--bg);
+    background-image:
+      radial-gradient(1000px 620px at 12% -12%,rgba(34,211,238,.15),transparent 60%),
+      radial-gradient(900px 560px at 92% 4%,rgba(168,85,247,.14),transparent 60%),
+      radial-gradient(760px 620px at 50% 118%,rgba(99,102,241,.15),transparent 62%),
+      linear-gradient(180deg,#080b18,#0a0e1f 60%,#080b18);
+    background-attachment:fixed;-webkit-font-smoothing:antialiased;line-height:1.55;}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.3;
+    background-image:linear-gradient(rgba(148,178,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(148,178,255,.045) 1px,transparent 1px);
+    background-size:46px 46px;mask-image:radial-gradient(760px 540px at 50% 0%,#000 25%,transparent 78%);
+    -webkit-mask-image:radial-gradient(760px 540px at 50% 0%,#000 25%,transparent 78%)}
+  .wrap{width:100%;max-width:1180px;margin:0 auto;padding:0 18px;position:relative;z-index:1}
+  [hidden]{display:none!important}
+  a{color:#9fe8ff}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+  /* ---------- header ---------- */
+  header.top{padding:26px 0 0;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .logo{width:44px;height:44px;flex:0 0 auto;filter:drop-shadow(0 8px 22px rgba(99,102,241,.45))}
+  .brand h1{margin:0;font-size:1.3rem;letter-spacing:-.02em;font-weight:650}
+  .brand h1 span{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .brand p{margin:0;color:var(--ink-2);font-size:.8rem}
+  .top-spacer{flex:1 1 auto}
+  .chip{display:inline-flex;align-items:center;gap:7px;font-size:.76rem;color:var(--ink-2);
+    border:1px solid var(--line);background:rgba(255,255,255,.035);padding:5px 11px;border-radius:999px;white-space:nowrap}
+  .chip b{color:#dfe5ff;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok);flex:0 0 auto}
+  .dot.demo{background:var(--warn);box-shadow:0 0 10px var(--warn)}
+  .dot.bad{background:var(--bad);box-shadow:0 0 10px var(--bad)}
+
+  /* ---------- cards / buttons ---------- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:22px}
+  main{padding:20px 0 40px}
+  h2{margin:0 0 4px;font-size:1.05rem;letter-spacing:-.01em}
+  .hint{margin:0 0 18px;color:var(--ink-2);font-size:.86rem}
+  .hint code,code{font-family:var(--mono);font-size:.83em;background:rgba(148,178,255,.1);padding:2px 6px;border-radius:6px;color:#c7d2ff}
+  label{display:block;font-size:.75rem;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2);margin:0 0 6px}
+  .field{margin-bottom:15px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row>*{flex:1 1 200px;min-width:0}
+  input[type=text],input[type=password],input[type=search],select,textarea{
+    width:100%;font:inherit;font-size:.92rem;color:var(--ink);background:rgba(8,12,26,.75);
+    border:1px solid var(--line-2);border-radius:var(--r-sm);padding:11px 13px;outline:none;transition:.16s}
+  input:focus,select:focus{border-color:rgba(129,140,248,.85);box-shadow:0 0 0 4px rgba(99,102,241,.18)}
+  ::placeholder{color:#5b658f}
+  select{appearance:none;cursor:pointer;padding-right:32px;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23a3aed6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 12px center}
+  .btn{appearance:none;border:0;cursor:pointer;font:inherit;font-weight:640;font-size:.88rem;color:#fff;
+    background:var(--grad);padding:11px 16px;border-radius:11px;display:inline-flex;align-items:center;gap:8px;justify-content:center;
+    box-shadow:0 12px 26px -14px rgba(99,102,241,.9);transition:transform .14s,filter .2s;white-space:nowrap}
+  .btn:hover{transform:translateY(-1px);filter:brightness(1.07)}
+  .btn:active{transform:translateY(0)}
+  .btn svg{width:16px;height:16px}
+  .btn.ghost{background:rgba(255,255,255,.05);box-shadow:none;border:1px solid var(--line-2);color:var(--ink)}
+  .btn.ghost:hover{background:rgba(255,255,255,.1)}
+  .btn.danger{background:linear-gradient(135deg,#fb7185,#f43f5e);box-shadow:0 12px 26px -14px rgba(244,63,94,.9)}
+  .btn.sm{padding:7px 11px;font-size:.8rem;border-radius:9px}
+  .btn[disabled]{opacity:.55;cursor:not-allowed;transform:none}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .alert{border:1px solid rgba(251,113,133,.4);background:rgba(251,113,133,.1);color:#ffd9df;border-radius:var(--r-sm);
+    padding:11px 13px;font-size:.85rem;margin-top:14px;white-space:pre-wrap}
+  .alert.ok{border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.1);color:#d6fff1}
+  .alert.warn{border-color:rgba(251,191,36,.42);background:rgba(251,191,36,.1);color:#fff3d6}
+  .alert.info{border-color:var(--line-2);background:rgba(148,178,255,.08);color:var(--ink-2)}
+  .note{font-size:.78rem;color:var(--ink-3);margin:12px 0 0}
+  details.help{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+  details.help summary{cursor:pointer;font-size:.85rem;font-weight:600;color:var(--ink-2);list-style:none}
+  details.help summary::-webkit-details-marker{display:none}
+  details.help summary::before{content:"？ ";color:var(--cy)}
+  details.help ol{margin:10px 0 0;padding-left:20px;font-size:.84rem;color:var(--ink-2)}
+  details.help li{margin-bottom:6px}
+  .check{display:flex;align-items:center;gap:9px;font-size:.85rem;color:var(--ink);text-transform:none;letter-spacing:0;
+    font-weight:500;background:rgba(8,12,26,.6);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;cursor:pointer}
+  .check input{appearance:none;width:18px;height:18px;border-radius:6px;border:1.6px solid var(--line-2);background:rgba(0,0,0,.35);
+    flex:0 0 auto;position:relative;cursor:pointer}
+  .check input:checked{background:var(--grad);border-color:transparent}
+  .check input:checked::after{content:"";position:absolute;left:5.5px;top:2.2px;width:5px;height:9px;border:2px solid #fff;border-top:0;border-left:0;transform:rotate(42deg)}
+
+  /* ---------- toolbar ---------- */
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:18px 0 14px}
+  .searchbox{position:relative;flex:1 1 240px;min-width:180px}
+  .searchbox input{padding-left:36px}
+  .searchbox svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--ink-3)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px}
+  .filt{appearance:none;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--ink-2);font:inherit;font-size:.78rem;
+    font-weight:600;padding:6px 11px;border-radius:999px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+  .filt b{font-weight:600;color:var(--ink);opacity:.75;font-family:var(--mono);font-size:.7rem}
+  .filt:hover{background:rgba(255,255,255,.08);color:var(--ink)}
+  .filt[aria-pressed="true"]{background:linear-gradient(135deg,rgba(34,211,238,.22),rgba(168,85,247,.22));color:#fff;border-color:rgba(148,178,255,.4)}
+  .seg{display:flex;border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+  .seg button{appearance:none;border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:.78rem;font-weight:600;
+    padding:8px 12px;cursor:pointer}
+  .seg button[aria-pressed="true"]{background:rgba(99,102,241,.3);color:#fff}
+  .meter{height:7px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;width:120px}
+  .meter i{display:block;height:100%;width:0;background:var(--grad);transition:width .4s}
+
+  /* ---------- drop zone + grid ---------- */
+  .drop{margin:0 0 14px;border:1.5px dashed var(--line-2);border-radius:var(--r);padding:26px 18px;text-align:center;
+    color:var(--ink-2);font-size:.88rem;background:rgba(8,12,26,.35);transition:.18s}
+  .drop.over{border-color:var(--cy);background:rgba(34,211,238,.08);color:var(--ink)}
+  .drop b{color:var(--ink)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px}
+  .tile{position:relative;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;background:rgba(8,12,26,.55);
+    cursor:pointer;transition:.16s;text-align:left;padding:0;font:inherit;color:inherit;display:block;width:100%}
+  .tile:hover{transform:translateY(-2px);border-color:var(--line-2);box-shadow:0 16px 34px -20px #000}
+  .thumb{height:118px;display:grid;place-items:center;font-size:2rem;background:linear-gradient(160deg,rgba(99,102,241,.14),rgba(34,211,238,.06));
+    overflow:hidden;position:relative}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .tile .nm{font-size:.8rem;font-weight:600;padding:9px 10px 3px;word-break:break-word;line-height:1.35}
+  .tile .mt{font-size:.7rem;color:var(--ink-3);padding:0 10px 10px;display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-family:var(--mono)}
+  .badge{font-size:.62rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:6px;
+    border:1px solid var(--line-2);color:var(--ink-2)}
+  .badge.enc{border-color:rgba(52,211,153,.5);color:#8bf0cd;background:rgba(52,211,153,.1)}
+  .badge.big{border-color:rgba(251,191,36,.5);color:#ffe1a3;background:rgba(251,191,36,.1)}
+  .list{display:flex;flex-direction:column;gap:8px}
+  .rowitem{display:grid;grid-template-columns:38px 1fr auto auto auto;gap:12px;align-items:center;border:1px solid var(--line);
+    border-radius:var(--r-sm);background:rgba(8,12,26,.5);padding:9px 12px;cursor:pointer;font-size:.86rem}
+  .rowitem:hover{background:rgba(148,178,255,.07)}
+  .rowitem .ico{font-size:1.2rem;text-align:center}
+  .rowitem .sub{color:var(--ink-3);font-size:.74rem;font-family:var(--mono)}
+  .rowitem .acts{display:flex;gap:6px}
+  .empty{text-align:center;color:var(--ink-2);padding:44px 16px;border:1.5px dashed var(--line);border-radius:var(--r);font-size:.9rem}
+  .empty .big{font-size:2rem;display:block;margin-bottom:8px}
+
+  /* ---------- upload tray ---------- */
+  .tray{position:fixed;right:18px;bottom:18px;width:330px;max-width:calc(100vw - 36px);background:var(--card-solid);
+    border:1px solid var(--line-2);border-radius:var(--r);box-shadow:var(--shadow);z-index:40;overflow:hidden}
+  .tray header{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);font-size:.85rem;font-weight:650}
+  .tray header button{margin-left:auto}
+  .tray ul{list-style:none;margin:0;padding:8px 13px 13px;max-height:262px;overflow:auto}
+  .tray li{margin-top:9px;font-size:.78rem}
+  .tray .lbl{display:flex;justify-content:space-between;gap:8px;color:var(--ink-2)}
+  .tray .lbl b{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar{height:5px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:5px}
+  .bar i{display:block;height:100%;width:0;background:var(--grad);transition:width .25s}
+  .bar.done i{background:var(--ok)}
+  .bar.fail i{background:var(--bad);width:100%}
+
+  /* ---------- modal ---------- */
+  .modal{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:18px;
+    background:rgba(4,6,14,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  .sheet{width:min(940px,100%);max-height:92vh;overflow:auto;background:var(--card-solid);border:1px solid var(--line-2);
+    border-radius:var(--r);box-shadow:var(--shadow);padding:18px}
+  .sheet.small{width:min(460px,100%)}
+  .sheet-head{display:flex;gap:12px;align-items:flex-start}
+  .sheet-head h3{margin:0;font-size:1rem;word-break:break-word}
+  .x{margin-left:auto;appearance:none;border:1px solid var(--line-2);background:rgba(255,255,255,.05);color:var(--ink);
+    width:32px;height:32px;border-radius:9px;cursor:pointer;font-size:1rem;line-height:1}
+  .media{margin:14px 0;background:#05070f;border:1px solid var(--line);border-radius:var(--r-sm);display:grid;place-items:center;
+    min-height:200px;max-height:58vh;overflow:auto}
+  .media img,.media video{max-width:100%;max-height:58vh;display:block}
+  .media audio{width:min(520px,90%);margin:34px 0}
+  .media iframe{width:100%;height:58vh;border:0;background:#fff}
+  .media pre{margin:0;padding:14px;font-family:var(--mono);font-size:.8rem;white-space:pre-wrap;word-break:break-word;
+    max-height:58vh;overflow:auto;width:100%;color:#cfe6ff}
+  .media .ph{color:var(--ink-3);font-size:.86rem;padding:28px;text-align:center}
+  .meta-chips{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0 0}
+  .field-inline{display:flex;gap:8px;align-items:center;margin-top:12px}
+  .progress-line{font-size:.78rem;color:var(--ink-2);margin-top:10px;font-family:var(--mono)}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,140%);z-index:70;background:var(--card-solid);
+    border:1px solid var(--line-2);padding:11px 17px;border-radius:12px;font-size:.85rem;font-weight:600;box-shadow:var(--shadow);
+    transition:transform .3s cubic-bezier(.2,1.3,.4,1);max-width:90vw;text-align:center}
+  #toast.show{transform:translate(-50%,0)}
+  footer{padding:6px 0 30px;color:var(--ink-3);font-size:.78rem;text-align:center}
+  footer a{color:var(--ink-2);text-decoration:none;border-bottom:1px dotted var(--line-2)}
+  @media (max-width:640px){
+    .card{padding:17px}
+    .rowitem{grid-template-columns:30px 1fr auto}
+    .rowitem .when,.rowitem .sub.kind{display:none}
+    .grid{grid-template-columns:repeat(auto-fill,minmax(142px,1fr))}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <svg class="logo" viewBox="0 0 512 512" aria-hidden="true">
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#22d3ee"/><stop offset=".55" stop-color="#6366f1"/><stop offset="1" stop-color="#a855f7"/>
+      </linearGradient></defs>
+      <rect width="512" height="512" rx="118" fill="#0b1020"/>
+      <rect x="18" y="18" width="476" height="476" rx="103" fill="none" stroke="url(#lg)" stroke-width="14" opacity=".5"/>
+      <rect x="96" y="86" width="320" height="340" rx="44" fill="none" stroke="url(#lg)" stroke-width="26"/>
+      <circle cx="256" cy="256" r="62" fill="none" stroke="url(#lg)" stroke-width="24"/>
+      <circle cx="256" cy="256" r="14" fill="url(#lg)"/>
+      <path d="M256 158v36M256 318v36M158 256h36M318 256h36" stroke="url(#lg)" stroke-width="22" stroke-linecap="round"/>
+    </svg>
+    <div class="brand">
+      <h1>Repo<span>Vault</span></h1>
+      <p>Your git repo as a drive — no backend, no database, no server bill.</p>
+    </div>
+    <div class="top-spacer"></div>
+    <span class="chip" id="engine-chip" hidden><span class="dot" id="engine-dot"></span><b id="engine-name">—</b></span>
+    <span class="chip" id="usage-chip" hidden title="GitHub recommends keeping repos under 1 GB">
+      <span class="meter"><i id="usage-meter"></i></span><span id="usage-text">0 B</span>
+    </span>
+    <button class="btn ghost sm" id="settings-btn" hidden>Settings</button>
+  </header>
+
+  <main>
+    <!-- ======================= SETUP ======================= -->
+    <section id="setup-screen" class="card">
+      <h2>Connect a vault</h2>
+      <p class="hint">
+        RepoVault stores files by committing them to a repository you own. There is no server in the middle:
+        your browser talks straight to <code>api.github.com</code>, and the same files can be viewed from any device.
+      </p>
+
+      <div class="row">
+        <div class="field" style="flex:1 1 100%">
+          <label for="s-backend">Storage backend</label>
+          <select id="s-backend">
+            <option value="github">GitHub repository (free, works anywhere)</option>
+            <option value="memory">Demo vault (this browser only — try it first)</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="github-fields">
+        <div class="row">
+          <div class="field"><label for="s-owner">Owner (user or org)</label><input id="s-owner" type="text" placeholder="octocat" spellcheck="false" autocomplete="off" /></div>
+          <div class="field"><label for="s-repo">Repository</label><input id="s-repo" type="text" placeholder="my-vault" spellcheck="false" autocomplete="off" /></div>
+          <div class="field" style="flex:0 1 190px"><label for="s-branch">Branch (optional)</label><input id="s-branch" type="text" placeholder="auto" spellcheck="false" autocomplete="off" /></div>
+        </div>
+        <div class="field">
+          <label for="s-token">Fine-grained personal access token</label>
+          <input id="s-token" type="password" placeholder="github_pat_…" spellcheck="false" autocomplete="off" />
+          <p class="note">Scope it to <b>one repository</b> with <b>Contents: Read and write</b>. That token can only ever touch this vault.</p>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1 1 280px">
+          <label class="check"><input type="checkbox" id="s-remember" checked /> Remember this browser (token in localStorage)</label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="connect-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+          <span id="connect-label">Connect vault</span>
+        </button>
+        <button class="btn ghost" id="demo-btn">Try the demo vault</button>
+      </div>
+
+      <div class="alert" id="setup-error" hidden></div>
+
+      <details class="help">
+        <summary>How to set this up in 90 seconds (free)</summary>
+        <ol>
+          <li>Create a repo — <code>my-vault</code>. Make it <b>private</b> if you don't want anyone reading the files, or <b>public</b> and use the built-in encryption.</li>
+          <li>GitHub → <b>Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token</b>.</li>
+          <li>Repository access: <b>Only select repositories</b> → pick your vault. Permissions: <b>Contents → Read and write</b>. Nothing else.</li>
+          <li>Paste the token above and hit <b>Connect vault</b>. A fresh repo gets bootstrapped automatically on first upload.</li>
+        </ol>
+        <p class="note">
+          Deploy this page itself with GitHub Pages (Settings → Pages → Source: GitHub Actions) so it lives at
+          <code>https://&lt;you&gt;.github.io/repovault/</code> and works from any device. The token stays in your browser;
+          nothing is ever sent anywhere except GitHub.
+        </p>
+      </details>
+    </section>
+
+    <!-- ======================= EXPLORER ======================= -->
+    <section id="app-screen" hidden>
+      <div class="toolbar">
+        <div class="searchbox">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4.3-4.3"/></svg>
+          <input id="search" type="search" placeholder="Search files…  (press /)" autocomplete="off" />
+        </div>
+        <select id="folder-select" title="Folder"><option value="">All folders</option></select>
+        <select id="sort-select" title="Sort">
+          <option value="name">Name A→Z</option>
+          <option value="size">Largest first</option>
+          <option value="kind">By type</option>
+        </select>
+        <div class="seg">
+          <button id="view-grid" aria-pressed="true" title="Grid view">Grid</button>
+          <button id="view-list" aria-pressed="false" title="List view">List</button>
+        </div>
+        <button class="btn sm" id="upload-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V7"/><path d="M6 12l6-6 6 6"/><path d="M4 21h16"/></svg>
+          Upload
+        </button>
+        <button class="btn ghost sm" id="upload-folder-btn" title="Upload an entire folder">Folder</button>
+        <button class="btn ghost sm" id="refresh-btn" title="Re-read the repo">Refresh</button>
+        <button class="filt" id="encrypt-toggle" aria-pressed="false" title="Encrypt files in this browser before they are uploaded">🔒 Encrypt uploads</button>
+        <button class="btn ghost sm" id="lock-btn" hidden title="Forget the vault password held in memory">Lock vault</button>
+      </div>
+
+      <div class="row" id="encrypt-bar" hidden style="margin:0 0 14px">
+        <div class="field" style="flex:1 1 340px;margin-bottom:8px">
+          <label for="vault-password">Vault password — kept in this tab's memory only</label>
+          <input id="vault-password" type="password" placeholder="Encrypts on upload, decrypts on open" autocomplete="off" />
+          <p class="note">AES-256-GCM in your browser. If you lose this password the files are gone forever — GitHub only ever holds ciphertext.</p>
+        </div>
+      </div>
+
+      <div class="chips" id="kind-chips"></div>
+      <div class="alert info" id="empty-repo-note" hidden>
+        This repository is empty — the first file you upload creates the initial commit automatically.
+      </div>
+      <div class="alert warn" id="trunc-warn" hidden>
+        This repo has more files than GitHub's recursive tree endpoint returns in one page, so the list below is partial. Use search, or split the vault across repos.
+      </div>
+      <div class="alert warn" id="enc-note" hidden>
+        This vault contains encrypted files. Enter the vault password when you open one — the password never leaves your browser.
+      </div>
+
+      <div class="drop" id="drop">
+        <b>Drop files anywhere</b> — images, videos, PDFs, zips, anything.
+        <br />They go straight into the repo. Paste from the clipboard works too (⌘/Ctrl-V).
+      </div>
+
+      <div id="grid" class="grid"></div>
+      <div id="list" class="list" hidden></div>
+      <div id="empty-state" class="empty" hidden>
+        <span class="big">🗂️</span>
+        Nothing here yet. Upload something — or try dragging a folder in.
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>RepoVault · static site, zero backend · files are committed to your repo, so they live as long as git history does.
+    <br />GitHub limits: <b>100 MB per file</b>, ~1 GB per repo recommended. <span id="footer-note"></span></p>
+  </footer>
+</div>
+
+<!-- upload tray -->
+<aside class="tray" id="tray" hidden>
+  <header><span id="tray-title">Uploads</span><button class="x" id="tray-close" title="Hide">×</button></header>
+  <ul id="tray-list"></ul>
+</aside>
+
+<!-- viewer -->
+<div class="modal" id="viewer" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <div>
+        <h3 id="viewer-title">File</h3>
+        <div class="meta-chips" id="viewer-meta"></div>
+      </div>
+      <button class="x" id="viewer-close" title="Close (Esc)">×</button>
+    </div>
+    <div class="media" id="viewer-media"></div>
+    <div id="viewer-password-wrap" hidden>
+      <div class="field-inline">
+        <input id="viewer-password" type="password" placeholder="Vault password" autocomplete="off" style="flex:1" />
+        <button class="btn sm" id="viewer-unlock">Unlock</button>
+      </div>
+      <p class="note">Files are encrypted client-side before upload. Only someone with this password can read them — GitHub only ever stores ciphertext.</p>
+    </div>
+    <div class="progress-line" id="viewer-status"></div>
+    <div class="actions">
+      <button class="btn" id="viewer-download">Download</button>
+      <button class="btn ghost" id="viewer-share">Copy link</button>
+      <button class="btn ghost" id="viewer-rename">Rename</button>
+      <button class="btn danger" id="viewer-delete">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- confirm -->
+<div class="modal" id="confirm" hidden>
+  <div class="sheet small">
+    <div class="sheet-head">
+      <h3 id="confirm-title">Are you sure?</h3>
+      <button class="x" id="confirm-close">×</button>
+    </div>
+    <p class="hint" id="confirm-text" style="margin-top:10px"></p>
+    <div class="actions">
+      <button class="btn danger" id="confirm-ok">Confirm</button>
+      <button class="btn ghost" id="confirm-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="file-input" multiple hidden />
+<input type="file" id="folder-input" webkitdirectory directory multiple hidden />
+
+<script>
+/* RepoVault — single-file build. Generated by tools/bundle.mjs from index.html + app/**.
+   Do not edit here: edit the modules and re-run `node tools/bundle.mjs`. */
+(function () {
+"use strict";
+/* ==== app/core/util.js ================================================ */
+/**
+ * RepoVault — shared helpers.
+ *
+ * Pure, DOM-free, dependency-free. Runs identically in the browser (as an ES
+ * module) and in Node (for the test suite), which is why every function here
+ * avoids touching `window` or `document`.
+ */
+
+/** Hard facts we build around (see README → "The honest limits"). */
+const LIMITS = {
+  SMALL_FILE_BYTES: 20 * 1024 * 1024, //   <= this: Contents API (simple, one request)
+  WARN_FILE_BYTES: 50 * 1024 * 1024, //   GitHub starts warning about blobs this big
+  MAX_FILE_BYTES: 100 * 1024 * 1024, //   hard block for normal git objects
+  REPO_SOFT_LIMIT: 1024 * 1024 * 1024, // 1 GB "recommended" repo size
+  REPO_HARD_GUIDANCE: 5 * 1024 * 1024 * 1024,
+  SYSTEM_DIR: '.vault/', //               hidden housekeeping folder
+};
+
+const te = new TextEncoder();
+const td = new TextDecoder();
+
+/* ------------------------------------------------------------------ bytes */
+
+function formatBytes(n, digits = 1) {
+  const v = Number(n) || 0;
+  if (v < 1024) return v + ' B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let u = -1, x = v;
+  do { x /= 1024; u++; } while (x >= 1024 && u < units.length - 1);
+  return x.toFixed(x < 10 ? digits : 0) + ' ' + units[u];
+}
+
+function timeAgo(ts) {
+  if (!ts) return 'unknown';
+  const diff = Date.now() - new Date(ts).getTime();
+  const s = Math.round(diff / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d = Math.round(h / 24);
+  if (d < 31) return d + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+
+/* ------------------------------------------------------------------ paths */
+
+function normalizePath(p) {
+  return String(p || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((seg) => seg && seg !== '.' && seg !== '..')
+    .join('/');
+}
+
+function joinPath(...parts) {
+  return normalizePath(parts.filter(Boolean).join('/'));
+}
+
+function dirName(p) {
+  const n = normalizePath(p);
+  const i = n.lastIndexOf('/');
+  return i === -1 ? '' : n.slice(0, i);
+}
+
+function baseName(p) {
+  const n = normalizePath(p);
+  const i = n.lastIndexOf('/');
+  return i === -1 ? n : n.slice(i + 1);
+}
+
+function extOf(p) {
+  const name = baseName(p);
+  const i = name.lastIndexOf('.');
+  return i <= 0 ? '' : name.slice(i + 1).toLowerCase();
+}
+
+/** Percent-encode each path segment but keep the slashes. */
+function encodePath(p) {
+  return normalizePath(p).split('/').map(encodeURIComponent).join('/');
+}
+
+/** Make a filename safe for git + URLs + our UI. */
+function safeFileName(name, fallback = 'file') {
+  const cleaned = String(name || '')
+    .replace(/[\\/:*?"<>|#%]+/g, '-')
+    .replace(/[\u0000-\u001f\u007f]+/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\.{2,}/g, '.') // kill dot-runs so a name can never read as a traversal
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    .slice(0, 120);
+  return cleaned || fallback;
+}
+
+function safeFolder(folder) {
+  return normalizePath(folder || '').split('/').map((s) => s.replace(/[\\:*?"<>|#%]+/g, '-')).join('/');
+}
+
+/** `report.pdf` → `report-2.pdf` when `report.pdf` is already taken. */
+function uniquePath(path, taken) {
+  const has = (p) => (taken instanceof Set ? taken.has(p) : taken.includes(p));
+  if (!has(path)) return path;
+  const dir = dirName(path), name = baseName(path), ext = extOf(path);
+  const stem = ext ? name.slice(0, -(ext.length + 1)) : name;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = joinPath(dir, `${stem}-${i}${ext ? '.' + ext : ''}`);
+    if (!has(candidate)) return candidate;
+  }
+  throw new Error('Too many files with that name.');
+}
+
+/* -------------------------------------------------------------- file kinds */
+
+const KINDS = {
+  image: { label: 'Images', icon: '🖼️', mime: null },
+  video: { label: 'Videos', icon: '🎬', mime: null },
+  audio: { label: 'Audio', icon: '🎵', mime: null },
+  pdf: { label: 'PDFs', icon: '📕', mime: 'application/pdf' },
+  doc: { label: 'Docs', icon: '📄', mime: null },
+  archive: { label: 'Archives', icon: '🗜️', mime: null },
+  code: { label: 'Code', icon: '⌨️', mime: null },
+  other: { label: 'Other', icon: '📦', mime: 'application/octet-stream' },
+};
+
+const EXT_KIND = {
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', avif: 'image', bmp: 'image', svg: 'image', ico: 'image', heic: 'image',
+  mp4: 'video', webm: 'video', mov: 'video', m4v: 'video', mkv: 'video', avi: 'video',
+  mp3: 'audio', wav: 'audio', ogg: 'audio', m4a: 'audio', flac: 'audio', aac: 'audio',
+  pdf: 'pdf',
+  md: 'doc', txt: 'doc', rtf: 'doc', doc: 'doc', docx: 'doc', xls: 'doc', xlsx: 'doc', ppt: 'doc', pptx: 'doc', csv: 'doc', epub: 'doc',
+  zip: 'archive', gz: 'archive', tar: 'archive', '7z': 'archive', rar: 'archive', bz2: 'archive', xz: 'archive',
+  js: 'code', mjs: 'code', ts: 'code', jsx: 'code', tsx: 'code', json: 'code', html: 'code', css: 'code', py: 'code', rb: 'code', go: 'code', rs: 'code', java: 'code', c: 'code', cpp: 'code', h: 'code', sh: 'code', yml: 'code', yaml: 'code', toml: 'code', sql: 'code', xml: 'code',
+};
+
+const MIME = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml', ico: 'image/x-icon',
+  mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', flac: 'audio/flac', aac: 'audio/aac',
+  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', html: 'text/html', css: 'text/css', js: 'text/javascript', xml: 'application/xml',
+  zip: 'application/zip', gz: 'application/gzip', tar: 'application/x-tar', '7z': 'application/x-7z-compressed', rar: 'application/vnd.rar',
+  vault: 'application/octet-stream',
+};
+
+function kindOf(name) {
+  return EXT_KIND[extOf(name)] || 'other';
+}
+
+function mimeOf(name) {
+  return MIME[extOf(name)] || 'application/octet-stream';
+}
+
+function isTextLike(name) {
+  const e = extOf(name);
+  return ['txt', 'md', 'csv', 'json', 'xml', 'yml', 'yaml', 'toml', 'log', 'ini', 'env'].includes(e) || KINDS[EXT_KIND[e]] && EXT_KIND[e] === 'code';
+}
+
+/* ----------------------------------------------------------------- base64 */
+
+const CHUNK = 0x8000;
+
+/** Base64 for arbitrarily large buffers without blowing the call stack. */
+function b64encode(data) {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  let out = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(out);
+}
+
+function b64decode(str) {
+  const bin = atob(String(str || '').replace(/\s+/g, ''));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function utf8(str) { return te.encode(String(str)); }
+function fromUtf8(bytes) { return td.decode(bytes); }
+
+/** Accepts File | Blob | ArrayBuffer | TypedArray | string → Uint8Array. */
+async function toBytes(input) {
+  if (input == null) throw new Error('No data supplied.');
+  if (typeof input === 'string') return utf8(input);
+  if (input instanceof Uint8Array) return input;
+  if (typeof ArrayBuffer !== 'undefined' && input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  if (typeof Blob !== 'undefined' && input instanceof Blob) return new Uint8Array(await input.arrayBuffer());
+  throw new Error('Unsupported data type: ' + Object.prototype.toString.call(input));
+}
+
+/* ----------------------------------------------------------------- retries */
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry `fn` with exponential backoff. Honours `error.retryAfterMs` when the
+ * server tells us how long to wait (GitHub's secondary rate limits do).
+ */
+async function withRetry(fn, { retries = 3, baseDelay = 700, onRetry, isRetryable } = {}) {
+  const retryable = isRetryable || ((e) => !!(e && e.retryable));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      if (attempt >= retries || !retryable(err)) throw err;
+      const wait = Math.min(err.retryAfterMs || baseDelay * 2 ** attempt, 60_000) + Math.random() * 250;
+      if (onRetry) onRetry(err, attempt + 1, wait);
+      await sleep(wait);
+    }
+  }
+}
+
+/** Small typed error so the UI can react to `err.code` instead of matching text. */
+function codedError(code, message, extra) {
+  const err = new Error(message);
+  err.code = code;
+  if (extra) Object.assign(err, extra);
+  return err;
+}
+
+/* ==== app/core/crypto.js ============================================== */
+/**
+ * RepoVault — client-side file encryption.
+ *
+ * Why this exists: a repo is only "free unlimited storage" if you don't have to
+ * pay for private repos. If the vault lives in a **public** repo, anyone who
+ * guesses a path could read your files — unless they're encrypted before they
+ * ever leave the browser. Then a public repo is just untrusted disk space.
+ *
+ * Format (v1): `RVLT1` magic · uint32 header length · JSON header · ciphertext chunks
+ *
+ *   chunk i  = AES-256-GCM(key, iv = baseIV[0..8] || uint32BE(i), aad = header || uint32LE(i))
+ *
+ * Chunked (1 MiB) so a 90 MB video never needs one giant GCM call, and so a
+ * corrupted chunk is detected individually. The key is derived once per vault
+ * (PBKDF2-SHA256, per-vault random salt kept in `.vault/salt.b64`), not per
+ * file, so unlocking once unlocks the whole vault for the session.
+ */
+
+
+
+const MAGIC = new Uint8Array([0x52, 0x56, 0x4c, 0x54, 0x31]); // "RVLT1"
+const TAG_BYTES = 16;
+const DEFAULT_ITERATIONS = 200_000;
+const DEFAULT_CHUNK = 1024 * 1024;
+
+function hasWebCrypto() {
+  return typeof crypto !== 'undefined' && !!crypto.subtle && typeof crypto.subtle.encrypt === 'function';
+}
+
+function randomBytes(n) {
+  const b = new Uint8Array(n);
+  crypto.getRandomValues(b);
+  return b;
+}
+
+function isEncryptedBytes(bytes) {
+  if (!bytes || bytes.length < MAGIC.length) return false;
+  for (let i = 0; i < MAGIC.length; i++) if (bytes[i] !== MAGIC[i]) return false;
+  return true;
+}
+
+async function deriveVaultKey(password, salt, iterations = DEFAULT_ITERATIONS) {
+  if (!hasWebCrypto()) throw codedError('no-crypto', 'This browser has no WebCrypto (needs https:// or localhost).');
+  if (!password) throw codedError('password-required', 'A vault password is required for encrypted files.');
+  const material = await crypto.subtle.importKey('raw', te.encode(String(password)), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+function chunkIv(baseIv, index) {
+  const iv = baseIv.slice();
+  new DataView(iv.buffer, iv.byteOffset, iv.byteLength).setUint32(8, index, false);
+  return iv;
+}
+
+function chunkAad(headerBytes, index) {
+  const aad = new Uint8Array(headerBytes.length + 4);
+  aad.set(headerBytes, 0);
+  new DataView(aad.buffer).setUint32(headerBytes.length, index, true);
+  return aad;
+}
+
+/**
+ * Encrypt bytes → { data, header }.
+ * `meta` (original name/mime) is stored *inside* the encrypted header, so even
+ * the filename can stay secret if you rename the stored file yourself.
+ */
+async function encryptBytes(bytes, key, { meta = {}, chunkSize = DEFAULT_CHUNK, iterations = DEFAULT_ITERATIONS, onProgress } = {}) {
+  if (!hasWebCrypto()) throw codedError('no-crypto', 'This browser has no WebCrypto (needs https:// or localhost).');
+  const ivBase = randomBytes(12);
+  const header = {
+    v: 1, alg: 'A256GCM', kdf: 'PBKDF2-SHA256', iterations,
+    size: bytes.length, chunkSize,
+    chunks: Math.max(1, Math.ceil(bytes.length / chunkSize)),
+    iv: b64encode(ivBase),
+    name: meta.name || '', type: meta.type || '', at: Date.now(),
+  };
+  const headerBytes = te.encode(JSON.stringify(header));
+
+  const parts = [];
+  for (let i = 0; i < header.chunks; i++) {
+    const start = i * chunkSize;
+    const end = Math.min(bytes.length, start + chunkSize);
+    const ct = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv: chunkIv(ivBase, i), additionalData: chunkAad(headerBytes, i), tagLength: 128 },
+      key,
+      bytes.subarray(start, end),
+    );
+    parts.push(new Uint8Array(ct));
+    if (onProgress) onProgress((i + 1) / header.chunks);
+  }
+
+  const bodyLen = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(MAGIC.length + 4 + headerBytes.length + bodyLen);
+  out.set(MAGIC, 0);
+  new DataView(out.buffer).setUint32(MAGIC.length, headerBytes.length, true);
+  out.set(headerBytes, MAGIC.length + 4);
+  let offset = MAGIC.length + 4 + headerBytes.length;
+  for (const p of parts) { out.set(p, offset); offset += p.length; }
+
+  return { data: out, header };
+}
+
+/** Decrypt bytes → { data, header }. Throws on wrong password or any tampering. */
+async function decryptBytes(bytes, key, { onProgress } = {}) {
+  if (!hasWebCrypto()) throw codedError('no-crypto', 'This browser has no WebCrypto (needs https:// or localhost).');
+  if (!isEncryptedBytes(bytes)) throw codedError('not-encrypted', 'That file is not a RepoVault encrypted file.');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const headerLen = view.getUint32(MAGIC.length, true);
+  const headerStart = MAGIC.length + 4;
+  const headerBytes = bytes.subarray(headerStart, headerStart + headerLen);
+  let header;
+  try {
+    header = JSON.parse(td.decode(headerBytes));
+  } catch {
+    throw codedError('malformed', 'This encrypted file looks corrupted.');
+  }
+  if (header.v !== 1) throw codedError('unsupported', `Unsupported vault format v${header.v}.`);
+
+  const ivBase = b64decode(header.iv);
+  const out = new Uint8Array(header.size);
+  let offset = headerStart + headerLen;
+  let written = 0;
+
+  for (let i = 0; i < header.chunks; i++) {
+    const plainLen = Math.min(header.chunkSize, header.size - written);
+    const ctLen = plainLen + TAG_BYTES;
+    const ct = bytes.subarray(offset, offset + ctLen);
+    let plain;
+    try {
+      plain = new Uint8Array(await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: chunkIv(ivBase, i), additionalData: chunkAad(headerBytes, i), tagLength: 128 },
+        key,
+        ct,
+      ));
+    } catch {
+      throw codedError('bad-password', 'Wrong vault password — or the file was modified after upload.');
+    }
+    out.set(plain, written);
+    written += plain.length;
+    offset += ctLen;
+    if (onProgress) onProgress((i + 1) / header.chunks);
+  }
+
+  return { data: out, header };
+}
+
+/** Cheap metadata peek without decrypting (header is cleartext by design). */
+function peekHeader(bytes) {
+  if (!isEncryptedBytes(bytes)) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const headerLen = view.getUint32(MAGIC.length, true);
+  const start = MAGIC.length + 4;
+  try {
+    return JSON.parse(td.decode(bytes.subarray(start, start + headerLen)));
+  } catch {
+    return null;
+  }
+}
+
+/* ==== app/adapters/github.js ========================================== */
+/**
+ * RepoVault — GitHub storage adapter.
+ *
+ * Treats a git repository as a key/value store of file paths → blobs:
+ *
+ *   small files (<= 20 MB)  →  PUT /contents/:path          (one request, one commit)
+ *   large files (<= 100 MB) →  POST /git/blobs → /git/trees → /git/commits → PATCH /git/refs
+ *   delete / move           →  one tree commit (no data re-uploaded, even for GB-scale files)
+ *
+ * Everything is plain REST + a token; no SDK, no build step, works from any
+ * browser tab (api.github.com sends permissive CORS headers).
+ *
+ * Adapter interface (implement this to add S3 / R2 / Drive later):
+ *   test()                          → NormalisedRepo
+ *   listFiles({prefix})             → { files: FileEntry[], truncated }
+ *   putFile(path, bytes, opts)      → { commit, path, size }
+ *   getFileBytes(path)              → Uint8Array
+ *   deleteFile(path, opts)          → { commit }
+ *   moveFile(from, to, opts)        → { commit }
+ *   ensureInitialized()             → NormalisedRepo
+ *   usage()                         → { usedBytes, softLimitBytes }
+ *   publicUrl(path)                 → string | null
+ */
+
+
+
+const API_VERSION = '2022-11-28'; // pinned so a GitHub default change can't break us
+
+class GitHubError extends Error {
+  constructor(message, { status = 0, code = 'github', retryable = false, retryAfterMs = 0, payload = null } = {}) {
+    super(message);
+    this.name = 'GitHubError';
+    this.status = status;
+    this.code = code;
+    this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
+    this.payload = payload;
+  }
+}
+
+/* --------------------------------------------------------------- transport */
+
+function headerBag(raw) {
+  const map = {};
+  String(raw || '').split(/\r?\n/).forEach((line) => {
+    const i = line.indexOf(':');
+    if (i > 0) map[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+  });
+  return { get: (name) => map[String(name).toLowerCase()] ?? null };
+}
+
+/** XHR only where it buys something: upload progress. */
+function xhrRequest(url, { method, headers, body, onProgress, binary = false }) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    if (binary) xhr.responseType = 'arraybuffer';
+    for (const [k, v] of Object.entries(headers || {})) xhr.setRequestHeader(k, v);
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+    }
+    xhr.onload = () => resolve({
+      ok: xhr.status >= 200 && xhr.status < 300,
+      status: xhr.status,
+      headers: headerBag(xhr.getAllResponseHeaders()),
+      text: binary ? null : xhr.responseText,
+      bytes: binary && xhr.response ? new Uint8Array(xhr.response) : null,
+    });
+    xhr.onerror = () => reject(codedError('network', 'Network error while contacting ' + url, { retryable: true }));
+    xhr.send(body === undefined ? null : body);
+  });
+}
+
+/* ------------------------------------------------------------------ adapter */
+
+class GitHubAdapter {
+  static id = 'github';
+  static label = 'GitHub repository';
+
+  constructor({
+    owner, repo, branch = '', token, apiBase = 'https://api.github.com', fetchImpl = null, onLog = null,
+    smallFileThreshold = LIMITS.SMALL_FILE_BYTES, // overridable so tests can exercise both code paths cheaply
+    maxFileBytes = LIMITS.MAX_FILE_BYTES,
+  } = {}) {
+    if (!owner || !repo) throw codedError('config', 'Both owner and repo are required.');
+    this.owner = String(owner).trim();
+    this.repo = String(repo).trim().replace(/\.git$/, '');
+    this.branch = String(branch || '').trim();
+    this.token = token || '';
+    this.apiBase = apiBase.replace(/\/+$/, '');
+    this.fetchImpl = fetchImpl;
+    this.onLog = onLog;
+    this.smallFileThreshold = smallFileThreshold;
+    this.maxFileBytes = maxFileBytes;
+    this._headCache = null;
+    this._repoCache = null;
+  }
+
+  get id() { return GitHubAdapter.id; }
+  get label() { return GitHubAdapter.label; }
+  get slug() { return `${this.owner}/${this.repo}`; }
+
+  _fetch(input, init) {
+    const f = this.fetchImpl || (typeof fetch !== 'undefined' ? fetch : null);
+    if (!f) throw codedError('no-fetch', 'fetch() is unavailable in this environment.');
+    return f(input, init);
+  }
+
+  _headers(extra) {
+    return {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': API_VERSION,
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      ...(extra || {}),
+    };
+  }
+
+  _url(pathOrUrl) {
+    return pathOrUrl.startsWith('http') ? pathOrUrl : this.apiBase + pathOrUrl;
+  }
+
+  /** Raw request → { ok, status, headers, text, bytes }. */
+  async _raw(pathOrUrl, { method = 'GET', body, headers, onProgress, accept, binary = false } = {}) {
+    const url = this._url(pathOrUrl);
+    const finalHeaders = this._headers({ ...(accept ? { Accept: accept } : {}), ...(headers || {}) });
+    if (body !== undefined) finalHeaders['Content-Type'] = 'application/json';
+    const useXhr = !!onProgress && typeof XMLHttpRequest !== 'undefined' && !this.fetchImpl;
+    const started = Date.now();
+    let res;
+    if (useXhr) {
+      res = await xhrRequest(url, { method, headers: finalHeaders, body: body === undefined ? undefined : JSON.stringify(body), onProgress, binary });
+    } else {
+      const raw = await this._fetch(url, { method, headers: finalHeaders, body: body === undefined ? undefined : JSON.stringify(body) });
+      if (binary) {
+        res = { ok: raw.ok, status: raw.status, headers: raw.headers, text: null, bytes: new Uint8Array(await raw.arrayBuffer()) };
+      } else {
+        res = { ok: raw.ok, status: raw.status, headers: raw.headers, text: await raw.text(), bytes: null };
+      }
+    }
+    if (this.onLog) {
+      const kb = body === undefined ? 0 : Math.round(String(body).length / 1024);
+      this.onLog({ method, url, status: res.status, ms: Date.now() - started, sentKB: kb });
+    }
+    return res;
+  }
+
+  _fail(res) {
+    let payload = null;
+    try { payload = res.text ? JSON.parse(res.text) : null; } catch { /* not JSON */ }
+    const status = res.status;
+    const ghMessage = payload && payload.message ? payload.message : `HTTP ${status}`;
+    const remaining = res.headers.get('x-ratelimit-remaining');
+    const reset = Number(res.headers.get('x-ratelimit-reset')) || 0;
+    const retryAfter = Number(res.headers.get('retry-after')) || 0;
+
+    if (status === 401) return new GitHubError('Token rejected (401). It may be expired, revoked, or missing the "Contents: Read and write" permission.', { status, code: 'auth', payload });
+    if (status === 403 && (remaining === '0' || retryAfter)) {
+      const resetMs = reset ? reset * 1000 - Date.now() : 0;
+      return new GitHubError(`GitHub rate limit reached. ${reset ? 'Resets ' + new Date(reset * 1000).toLocaleTimeString() + '.' : ''}`, { status, code: 'rate-limit', retryable: true, retryAfterMs: Math.max(resetMs, retryAfter * 1000, 1000), payload });
+    }
+    if (status === 403) return new GitHubError('GitHub refused the request (403): ' + ghMessage, { status, code: 'forbidden', payload });
+    if (status === 404) return new GitHubError('Not found (404): ' + ghMessage, { status, code: 'not-found', payload });
+    if (status === 409) {
+      if (/empty/i.test(ghMessage)) return new GitHubError('Repository is empty.', { status, code: 'empty-repo', payload });
+      return new GitHubError('Conflict (409): ' + ghMessage, { status, code: 'conflict', retryable: true, payload });
+    }
+    if (status === 413) return new GitHubError('That file is too large for GitHub.', { status, code: 'too-large', payload });
+    if (status === 422) {
+      if (/sha|fast forward|reference update|conflict/i.test(ghMessage)) return new GitHubError('Update conflict (422): ' + ghMessage, { status, code: 'conflict', retryable: true, payload });
+      const detail = payload && payload.errors && payload.errors.length ? ' — ' + payload.errors.map((e) => e.message || e.code).join('; ') : '';
+      return new GitHubError('GitHub rejected the request (422): ' + ghMessage + detail, { status, code: 'unprocessable', payload });
+    }
+    if (status === 429) return new GitHubError('Too many requests (429).', { status, code: 'rate-limit', retryable: true, retryAfterMs: retryAfter * 1000 || 5000, payload });
+    if (status >= 500) return new GitHubError(`GitHub is having a moment (${status}).`, { status, code: 'server', retryable: true, payload });
+    return new GitHubError(ghMessage, { status, code: 'http', payload });
+  }
+
+  async _json(pathOrUrl, opts = {}) {
+    const res = await this._raw(pathOrUrl, opts);
+    if (!res.ok) throw this._fail(res);
+    if (!res.text) return null;
+    try { return JSON.parse(res.text); } catch { return null; }
+  }
+
+  /* ------------------------------------------------------------ inspection */
+
+  async getRepo({ fresh = false } = {}) {
+    if (this._repoCache && !fresh) return this._repoCache;
+    const data = await this._json(`/repos/${this.owner}/${this.repo}`);
+    this._repoCache = {
+      owner: this.owner,
+      repo: this.repo,
+      fullName: data.full_name,
+      isPrivate: !!data.private,
+      defaultBranch: data.default_branch || 'main',
+      sizeKB: data.size || 0,
+      htmlUrl: data.html_url,
+      canPush: !data.permissions || data.permissions.push !== false,
+      empty: (data.size || 0) === 0,
+    };
+    return this._repoCache;
+  }
+
+  /** Head commit sha of the working branch (cached until a write happens). */
+  async getHead({ fresh = false } = {}) {
+    if (this._headCache && !fresh) return this._headCache;
+    if (!this.branch) {
+      const repo = await this.getRepo();
+      this.branch = repo.defaultBranch;
+    }
+    const res = await this._raw(`/repos/${this.owner}/${this.repo}/git/ref/heads/${encodeURIComponent(this.branch)}`);
+    if (res.status === 404 || res.status === 409) {
+      const repo = await this.getRepo({ fresh: true });
+      const looksEmpty = res.status === 409 || /empty/i.test(res.text || '') || repo.empty;
+      throw new GitHubError(looksEmpty ? 'Repository has no commits yet.' : `Branch "${this.branch}" not found.`, {
+        status: res.status, code: 'empty-repo',
+      });
+    }
+    if (!res.ok) throw this._fail(res);
+    const data = JSON.parse(res.text);
+    this._headCache = { sha: data.object.sha, branch: this.branch };
+    return this._headCache;
+  }
+
+  async test() {
+    const repo = await this.getRepo({ fresh: true });
+    return { ...repo, branch: this.branch || repo.defaultBranch };
+  }
+
+  async usage() {
+    const repo = await this.getRepo({ fresh: true });
+    return { usedBytes: repo.sizeKB * 1024, softLimitBytes: LIMITS.REPO_SOFT_LIMIT, hardGuidanceBytes: LIMITS.REPO_HARD_GUIDANCE };
+  }
+
+  publicUrl(path) {
+    const branch = this.branch || 'main';
+    return `https://raw.githubusercontent.com/${this.owner}/${this.repo}/${encodeURIComponent(branch)}/${encodePath(path)}`;
+  }
+
+  /* --------------------------------------------------------------- listing */
+
+  async listFiles({ prefix = '', includeSystem = false, ref = null } = {}) {
+    const branch = ref || this.branch || (await this.getRepo()).defaultBranch;
+    this.branch = branch;
+    const data = await this._json(`/repos/${this.owner}/${this.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+    const wanted = normalizePath(prefix);
+    const files = (data.tree || [])
+      .filter((n) => n.type === 'blob')
+      .filter((n) => includeSystem || !n.path.startsWith(LIMITS.SYSTEM_DIR))
+      .filter((n) => !wanted || n.path.startsWith(wanted))
+      .map((n) => ({ path: n.path, sha: n.sha, size: n.size || 0, mode: n.mode }));
+    return { files, truncated: !!data.truncated, branch };
+  }
+
+  /* ---------------------------------------------------------------- read */
+
+  async getFileBytes(path) {
+    const branch = this.branch || (await this.getRepo()).defaultBranch;
+    const url = `/repos/${this.owner}/${this.repo}/contents/${encodePath(path)}?ref=${encodeURIComponent(branch)}`;
+    const res = await this._raw(url, { accept: 'application/vnd.github.raw', binary: true });
+    if (!res.ok) throw this._fail(res);
+    return res.bytes;
+  }
+
+  /* --------------------------------------------------------------- writes */
+
+  async ensureInitialized() {
+    const repo = await this.getRepo({ fresh: true });
+    if (!this.branch) this.branch = repo.defaultBranch;
+    try {
+      await this.getHead({ fresh: true });
+    } catch (err) {
+      if (err.code !== 'empty-repo') throw err;
+      // The Contents API is the only endpoint that can seed a repo with zero commits.
+      await this._json(`/repos/${this.owner}/${this.repo}/contents/${encodePath(joinPath(LIMITS.SYSTEM_DIR, 'init.json'))}`, {
+        method: 'PUT',
+        body: {
+          message: 'chore(repovault): initialise vault',
+          content: b64encode(utf8(JSON.stringify({ app: 'repovault', v: 1, createdAt: new Date().toISOString() }, null, 2))),
+          branch: this.branch,
+        },
+      });
+      this._headCache = null;
+      this._repoCache = null;
+    }
+    if (this.branch !== repo.defaultBranch) await this.ensureBranch(this.branch);
+    return this.getRepo({ fresh: true });
+  }
+
+  async ensureBranch(branch) {
+    try {
+      await this._json(`/repos/${this.owner}/${this.repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+      return { created: false };
+    } catch (err) {
+      if (err.code !== 'not-found' && err.code !== 'empty-repo') throw err;
+      const head = await this.getHead({ fresh: true });
+      await this._json(`/repos/${this.owner}/${this.repo}/git/refs`, {
+        method: 'POST',
+        body: { ref: `refs/heads/${branch}`, sha: head.sha },
+      });
+      this.branch = branch;
+      this._headCache = null;
+      return { created: true };
+    }
+  }
+
+  /**
+   * Create one commit from tree entries.
+   * entries: [{ path, sha|null, mode?, type? }] — `sha: null` deletes the path.
+   * Uses optimistic locking (force: false): if the branch moved meanwhile we
+   * re-read the head and re-commit, so two tabs never silently clobber each other.
+   */
+  async _commitEntries(entries, { message, attempts = 3 } = {}) {
+    let lastErr = null;
+    for (let i = 0; i < attempts; i++) {
+      const head = await this.getHead({ fresh: true });
+      const tree = await withRetry(() => this._json(`/repos/${this.owner}/${this.repo}/git/trees`, {
+        method: 'POST',
+        body: { base_tree: head.sha, tree: entries.map((e) => ({ mode: e.mode || '100644', type: e.type || 'blob', ...e })) },
+      }));
+      const commit = await withRetry(() => this._json(`/repos/${this.owner}/${this.repo}/git/commits`, {
+        method: 'POST',
+        body: { message, tree: tree.sha, parents: [head.sha] },
+      }));
+      try {
+        await this._json(`/repos/${this.owner}/${this.repo}/git/refs/heads/${encodeURIComponent(this.branch)}`, {
+          method: 'PATCH',
+          body: { sha: commit.sha, force: false },
+        });
+        this._headCache = { sha: commit.sha, branch: this.branch };
+        return { commit: commit.sha, tree: tree.sha };
+      } catch (err) {
+        lastErr = err;
+        if (err.code !== 'conflict' && err.code !== 'not-found') throw err;
+        this._headCache = null; // someone else pushed — rebase onto the new head and retry
+      }
+    }
+    throw lastErr || codedError('conflict', 'Could not update the branch after several attempts.');
+  }
+
+  /** Small files: Contents API (also auto-creates the branch on an empty repo). */
+  async putSmall(path, bytes, { message, sha = null, onProgress } = {}) {
+    const body = {
+      message: message || `add ${path}`,
+      content: b64encode(bytes),
+      branch: this.branch,
+      ...(sha ? { sha } : {}),
+    };
+    if (sha) body.sha = sha;
+    const res = await this._raw(`/repos/${this.owner}/${this.repo}/contents/${encodePath(path)}`, {
+      method: 'PUT', body, onProgress,
+    });
+    if (!res.ok) {
+      const err = this._fail(res);
+      // Overwriting a file needs its current sha; fetch it and retry once.
+      if ((err.code === 'conflict' || err.code === 'unprocessable') && !sha) {
+        const existing = await this.getFileMeta(path).catch(() => null);
+        if (existing) return this.putSmall(path, bytes, { message, sha: existing.sha, onProgress });
+      }
+      throw err;
+    }
+    this._headCache = null;
+    const data = JSON.parse(res.text);
+    return { commit: data.commit && data.commit.sha, path, size: bytes.length };
+  }
+
+  /** Large files: blob → tree → commit → ref. Returns without touching history twice. */
+  async putLarge(path, bytes, { message, onProgress } = {}) {
+    const blob = await withRetry(() => this._json(`/repos/${this.owner}/${this.repo}/git/blobs`, {
+      method: 'POST',
+      body: { content: b64encode(bytes), encoding: 'base64' },
+      onProgress: onProgress ? (f) => onProgress(f * 0.85) : undefined,
+    }));
+    const result = await this._commitEntries([{ path: normalizePath(path), sha: blob.sha }], { message });
+    if (onProgress) onProgress(1);
+    return { commit: result.commit, path, size: bytes.length };
+  }
+
+  async putFile(path, data, { message, sha = null, onProgress } = {}) {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    if (!bytes.length) throw codedError('empty', 'Refusing to upload an empty payload.');
+    if (bytes.length > this.maxFileBytes) {
+      throw codedError(
+        'too-large',
+        `${(bytes.length / 1048576).toFixed(1)} MB exceeds GitHub's 100 MB per-file limit. Split it (e.g. zip parts) or use an R2/S3 adapter (see README).`,
+      );
+    }
+    return bytes.length <= this.smallFileThreshold
+      ? this.putSmall(path, bytes, { message, sha, onProgress })
+      : this.putLarge(path, bytes, { message, onProgress });
+  }
+
+  async getFileMeta(path) {
+    const branch = this.branch || (await this.getRepo()).defaultBranch;
+    const data = await this._json(`/repos/${this.owner}/${this.repo}/contents/${encodePath(path)}?ref=${encodeURIComponent(branch)}`);
+    if (Array.isArray(data)) throw codedError('not-a-file', `${path} is a directory.`);
+    return { path, sha: data.sha, size: data.size, url: data.download_url };
+  }
+
+  async deleteFile(path, { message } = {}) {
+    const result = await this._commitEntries(
+      [{ path: normalizePath(path), sha: null }],
+      { message: message || `delete ${path}` },
+    );
+    return { commit: result.commit, path };
+  }
+
+  /** Atomic move/rename — the file never re-uploads, even at 90 MB. */
+  async moveFile(from, to, { message, sha = null } = {}) {
+    let blobSha = sha;
+    if (!blobSha) {
+      const listing = await this.listFiles({ includeSystem: true });
+      const found = listing.files.find((f) => f.path === normalizePath(from));
+      if (!found) throw codedError('not-found', `Can't find ${from} in the vault index.`);
+      blobSha = found.sha;
+    }
+    const result = await this._commitEntries(
+      [
+        { path: normalizePath(to), sha: blobSha },
+        { path: normalizePath(from), sha: null },
+      ],
+      { message: message || `move ${from} → ${to}` },
+    );
+    return { commit: result.commit, from, to };
+  }
+}
+
+/* ==== app/adapters/memory.js ========================================== */
+/**
+ * RepoVault — demo adapter.
+ *
+ * Same interface as the GitHub adapter, backed by localStorage (with an
+ * in-memory fallback when storage is blocked, e.g. inside a sandboxed iframe).
+ * Lets a reviewer click around the whole app — upload, preview, rename, delete,
+ * encryption — with no account, no token and no network.
+ */
+
+
+
+const CAPACITY = 4 * 1024 * 1024; // 4 MB of base64 ≈ 3 MB of files — localStorage's usual ceiling
+
+function checksum(bytes) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) {
+    h ^= bytes[i];
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0') + bytes.length.toString(16);
+}
+
+class MemoryStorage {
+  constructor() { this.map = new Map(); }
+  getItem(k) { return this.map.has(k) ? this.map.get(k) : null; }
+  setItem(k, v) { this.map.set(k, String(v)); }
+  removeItem(k) { this.map.delete(k); }
+}
+
+class MemoryAdapter {
+  static id = 'memory';
+  static label = 'Demo vault (this browser only)';
+
+  constructor({ storage = null, namespace = 'repovault.demo.v1', capacity = CAPACITY, branch = 'main' } = {}) {
+    this.branch = branch;
+    this.namespace = namespace;
+    this.capacity = capacity;
+    this.owner = 'demo';
+    this.repo = 'local-vault';
+    this.slug = 'demo/local-vault';
+    let store = storage;
+    if (!store && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(namespace + ':probe', '1');
+        localStorage.removeItem(namespace + ':probe');
+        store = localStorage;
+      } catch { store = null; }
+    }
+    this.storage = store || new MemoryStorage();
+    this.persistent = store !== null && store !== undefined && store === this.storage;
+    this._files = this._read();
+  }
+
+  get id() { return MemoryAdapter.id; }
+  get label() { return MemoryAdapter.label; }
+
+  _read() {
+    try {
+      const raw = this.storage.getItem(this.namespace);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return new Map((Array.isArray(parsed) ? parsed : []).map((f) => [f.path, f]));
+    } catch {
+      return new Map();
+    }
+  }
+
+  _write() {
+    try {
+      this.storage.setItem(this.namespace, JSON.stringify([...this._files.values()]));
+      return true;
+    } catch {
+      throw codedError('quota', 'Demo storage is full (browsers cap localStorage at a few MB). Connect a real repository for real storage.');
+    }
+  }
+
+  _usage() {
+    return [...this._files.values()].reduce((n, f) => n + (f.b64 ? f.b64.length : 0), 0);
+  }
+
+  async test() {
+    return {
+      owner: this.owner, repo: this.repo, fullName: this.slug,
+      isPrivate: true, defaultBranch: this.branch, branch: this.branch,
+      sizeKB: Math.round(this._usage() / 1024), htmlUrl: '', canPush: true, empty: false,
+      demo: true, persistent: this.persistent,
+    };
+  }
+
+  async ensureInitialized() { return this.test(); }
+  async usage() { return { usedBytes: this._usage(), softLimitBytes: this.capacity, hardGuidanceBytes: this.capacity, demo: true }; }
+  publicUrl() { return null; }
+
+  async listFiles({ prefix = '', includeSystem = true } = {}) {
+    const wanted = normalizePath(prefix);
+    const files = [...this._files.values()]
+      .filter((f) => includeSystem || !f.path.startsWith(LIMITS.SYSTEM_DIR))
+      .filter((f) => !wanted || f.path.startsWith(wanted))
+      .map((f) => ({ path: f.path, sha: f.sha, size: f.size, updatedAt: f.at }));
+    return { files, truncated: false, branch: this.branch };
+  }
+
+  async getFileBytes(path) {
+    const f = this._files.get(normalizePath(path));
+    if (!f) throw codedError('not-found', `${path} is not in the demo vault.`);
+    const bin = atob(f.b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  async putFile(path, data, { onProgress } = {}) {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    let b64 = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    b64 = btoa(b64);
+    if (this._usage() + b64.length > this.capacity) {
+      throw codedError('quota', 'Demo vault is full (4 MB cap). Connect a real repository for real storage.');
+    }
+    const clean = normalizePath(path);
+    const record = { path: clean, name: baseName(clean), folder: dirName(clean), size: bytes.length, sha: checksum(bytes), b64, at: new Date().toISOString() };
+    this._files.set(clean, record);
+    this._write();
+    if (onProgress) onProgress(1);
+    return { commit: record.sha, path: clean, size: bytes.length, demo: true };
+  }
+
+  async deleteFile(path) {
+    const clean = normalizePath(path);
+    this._files.delete(clean);
+    this._write();
+    return { commit: 'demo-' + Date.now(), path: clean, demo: true };
+  }
+
+  async moveFile(from, to) {
+    const clean = normalizePath(from);
+    const record = this._files.get(clean);
+    if (!record) throw codedError('not-found', `${from} is not in the demo vault.`);
+    const target = normalizePath(to);
+    this._files.delete(clean);
+    record.path = target;
+    record.name = baseName(target);
+    record.folder = dirName(target);
+    this._files.set(target, record);
+    this._write();
+    return { commit: 'demo-' + Date.now(), from: clean, to: target, demo: true };
+  }
+
+  async clear() {
+    this._files.clear();
+    this._write();
+  }
+}
+
+/* ==== app/core/vault.js =============================================== */
+/**
+ * RepoVault — domain layer.
+ *
+ * Sits between the UI and any StorageAdapter so the app never talks to GitHub
+ * directly. Everything the UI needs is here: listing, searching, upload with
+ * optional encryption, preview, rename, delete, quota accounting.
+ */
+
+
+
+
+const SALT_PATH = LIMITS.SYSTEM_DIR + 'salt.b64';
+const ENC_SUFFIX = '.vault';
+const SALT_BYTES = 32;
+
+class Vault {
+  constructor({ adapter, defaultFolder = 'uploads/' } = {}) {
+    if (!adapter) throw codedError('config', 'A Vault needs a storage adapter.');
+    this.adapter = adapter;
+    this.defaultFolder = defaultFolder;
+    this.entries = [];
+    this.info = null;
+    this.usage = null;
+    this.truncated = false;
+    this._key = null;
+    this._unlocked = false;
+  }
+
+  /* ------------------------------------------------------------ lifecycle */
+
+  async connect() {
+    this.info = await this.adapter.test();
+    if (this.adapter.ensureInitialized) await this.adapter.ensureInitialized();
+    this.info = await this.adapter.test();
+    this.usage = this.adapter.usage ? await this.adapter.usage() : null;
+    await this.refresh();
+    return this.info;
+  }
+
+  async refresh({ prefix = '' } = {}) {
+    const { files, truncated } = await this.adapter.listFiles({ prefix });
+    this.truncated = truncated;
+    this.entries = files.map((f) => this.decorate(f));
+    if (this.adapter.usage) this.usage = await this.adapter.usage();
+    return this.entries;
+  }
+
+  decorate(file) {
+    const encrypted = file.path.endsWith(ENC_SUFFIX);
+    const displayName = encrypted ? baseName(file.path).slice(0, -ENC_SUFFIX.length) : baseName(file.path);
+    return {
+      path: file.path,
+      name: baseName(file.path),
+      displayName,
+      folder: dirName(file.path),
+      size: file.size,
+      sha: file.sha,
+      encrypted,
+      kind: encrypted ? kindOf(displayName) : kindOf(file.path),
+      mime: mimeOf(displayName),
+      updatedAt: file.updatedAt || null,
+      system: file.path.startsWith(LIMITS.SYSTEM_DIR),
+    };
+  }
+
+  /* ------------------------------------------------------------ searching */
+
+  list({ query = '', kind = 'all', folder = '', sort = 'newest' } = {}) {
+    const q = query.trim().toLowerCase();
+    let out = this.entries.filter((e) => !e.system);
+    if (q) out = out.filter((e) => e.displayName.toLowerCase().includes(q) || e.path.toLowerCase().includes(q));
+    if (kind && kind !== 'all') out = out.filter((e) => (kind === 'encrypted' ? e.encrypted : e.kind === kind));
+    if (folder) out = out.filter((e) => e.folder === folder);
+    const by = {
+      newest: (a, b) => a.displayName.localeCompare(b.displayName),
+      size: (a, b) => b.size - a.size,
+      kind: (a, b) => a.kind.localeCompare(b.kind) || a.displayName.localeCompare(b.displayName),
+      name: (a, b) => a.displayName.localeCompare(b.displayName),
+    };
+    return out.sort(by[sort] || by.name);
+  }
+
+  folders() {
+    const set = new Set();
+    for (const e of this.entries) if (!e.system && e.folder) set.add(e.folder);
+    return [...set].sort();
+  }
+
+  summary() {
+    const files = this.entries.filter((e) => !e.system);
+    const byKind = {};
+    let bytes = 0, encrypted = 0;
+    for (const f of files) {
+      byKind[f.kind] = (byKind[f.kind] || 0) + 1;
+      bytes += f.size || 0;
+      if (f.encrypted) encrypted++;
+    }
+    return { count: files.length, bytes, byKind, encrypted, human: formatBytes(bytes) };
+  }
+
+  /* ------------------------------------------------------------ encryption */
+
+  get unlocked() { return this._unlocked; }
+  get hasEncryptedFiles() { return this.entries.some((e) => e.encrypted); }
+
+  /** Derive (once per session) the vault key from the vault salt file. */
+  async ensureKey(password) {
+    if (this._key) return this._key;
+    if (!hasWebCrypto()) throw codedError('no-crypto', 'Encryption needs a secure context (https:// or localhost).');
+    if (!password) throw codedError('password-required', 'Enter your vault password to read encrypted files.');
+    let salt = null;
+    try {
+      const stored = await this.adapter.getFileBytes(SALT_PATH);
+      salt = b64decode(fromUtf8(stored).trim());
+      if (salt.length !== SALT_BYTES) throw codedError('malformed', 'The vault salt file is corrupted.');
+    } catch (err) {
+      // Only a *missing* salt is created. Any other failure (auth, network,
+      // corruption) must surface: silently minting a new salt would make every
+      // previously encrypted file undecryptable.
+      if (err.code !== 'not-found') throw err;
+      salt = randomBytes(SALT_BYTES);
+      await this.adapter.putFile(SALT_PATH, utf8(b64encode(salt)), { message: 'chore(repovault): create vault salt' });
+    }
+    this._key = await deriveVaultKey(password, salt, DEFAULT_ITERATIONS);
+    this._unlocked = true;
+    return this._key;
+  }
+
+  lock() {
+    this._key = null;
+    this._unlocked = false;
+  }
+
+  /* --------------------------------------------------------------- upload */
+
+  /**
+   * @param input    File | Blob | Uint8Array | ArrayBuffer
+   * @param options  { name, folder, encrypt, password, onProgress }
+   */
+  async upload(input, { name, folder, encrypt = false, password = null, onProgress = null } = {}) {
+    const sourceName = name || (input && input.name) || 'file';
+    const fileName = safeFileName(sourceName);
+    const mime = (input && input.type) || mimeOf(fileName);
+    const bytes = await toBytes(input);
+    if (!bytes.length) throw codedError('empty', 'That file is empty.');
+
+    let payload = bytes;
+    let storedName = fileName;
+    if (encrypt) {
+      const key = await this.ensureKey(password);
+      const enc = await encryptBytes(bytes, key, {
+        meta: { name: fileName, type: mime },
+        onProgress: onProgress ? (f) => onProgress(f * 0.45) : null,
+      });
+      payload = enc.data;
+      storedName = fileName + ENC_SUFFIX;
+    }
+
+    if (payload.length > LIMITS.MAX_FILE_BYTES) {
+      throw codedError('too-large',
+        `${formatBytes(bytes.length)} is over GitHub's 100 MB per-file limit${encrypt ? ' (encryption adds ~16 bytes per MB)' : ''}. Split it or add an R2/S3 adapter.`);
+    }
+
+    const targetFolder = safeFolder(folder ?? this.defaultFolder);
+    const taken = new Set(this.entries.map((e) => e.path));
+    const path = uniquePath(joinPath(targetFolder, storedName), taken);
+
+    const res = await this.adapter.putFile(path, payload, {
+      message: `${encrypt ? 'add encrypted' : 'add'}: ${storedName} (${formatBytes(bytes.length)})`,
+      onProgress: onProgress ? (f) => onProgress(encrypt ? 0.45 + f * 0.55 : f) : null,
+    });
+
+    const entry = this.decorate({ path, sha: res && res.commit, size: payload.length, updatedAt: new Date().toISOString() });
+    this.entries.push(entry);
+    if (this.adapter.usage) this.usage = await this.adapter.usage().catch(() => this.usage);
+    return entry;
+  }
+
+  /* --------------------------------------------------------------- access */
+
+  async readBytes(entry) {
+    return this.adapter.getFileBytes(entry.path);
+  }
+
+  /** Fetch (and decrypt if needed) a file → { blob, name, kind, mime, decrypted } */
+  async download(entry, { password = null, onProgress = null } = {}) {
+    const bytes = await this.adapter.getFileBytes(entry.path);
+    if (!entry.encrypted) {
+      const blob = new Blob([bytes], { type: entry.mime });
+      return { blob, name: entry.displayName, kind: entry.kind, mime: entry.mime, decrypted: false };
+    }
+    const key = await this.ensureKey(password);
+    let decrypted;
+    try {
+      decrypted = await decryptBytes(bytes, key, { onProgress });
+    } catch (err) {
+      // A typo'd password must never stay cached as "the" session key, otherwise
+      // every later file fails with a misleading error and unlocked() lies.
+      if (err.code === 'bad-password') this.lock();
+      throw err;
+    }
+    const { data, header } = decrypted;
+    const innerName = header.name || entry.displayName;
+    const innerMime = header.type || mimeOf(innerName);
+    return {
+      blob: new Blob([data], { type: innerMime }),
+      name: innerName,
+      kind: kindOf(innerName),
+      mime: innerMime,
+      decrypted: true,
+      size: data.length,
+    };
+  }
+
+  async text(entry, { password = null, limit = 200_000 } = {}) {
+    const bytes = await this.readBytes(entry);
+    let data = bytes;
+    if (entry.encrypted) {
+      const key = await this.ensureKey(password);
+      try {
+        data = (await decryptBytes(bytes, key)).data;
+      } catch (err) {
+        if (err.code === 'bad-password') this.lock();
+        throw err;
+      }
+    }
+    return fromUtf8(data.subarray(0, Math.min(data.length, limit)));
+  }
+
+  /* --------------------------------------------------------------- mutate */
+
+  async remove(entry) {
+    const res = await this.adapter.deleteFile(entry.path, { message: `delete: ${entry.name} (${formatBytes(entry.size)})` });
+    this.entries = this.entries.filter((e) => e.path !== entry.path);
+    return res;
+  }
+
+  async rename(entry, newName) {
+    const clean = safeFileName(newName);
+    if (!clean || clean === entry.name) return entry;
+    let target = clean;
+    if (entry.encrypted && !clean.endsWith(ENC_SUFFIX)) target = clean + ENC_SUFFIX;
+    if (!entry.encrypted && clean.endsWith(ENC_SUFFIX)) target = clean.slice(0, -ENC_SUFFIX.length);
+    const taken = new Set(this.entries.map((e) => e.path));
+    taken.delete(entry.path);
+    const to = uniquePath(joinPath(entry.folder, target), taken);
+    const res = await this.adapter.moveFile(entry.path, to, { sha: entry.sha, message: `rename: ${entry.name} → ${baseName(to)}` });
+    this.entries = this.entries.filter((e) => e.path !== entry.path);
+    const updated = this.decorate({ path: to, sha: res && res.commit, size: entry.size, updatedAt: new Date().toISOString() });
+    this.entries.push(updated);
+    return updated;
+  }
+
+  /** Shareable URL: public repos get a raw link, private repos only work in-app. */
+  shareUrl(entry, appUrl = '') {
+    if (this.info && !this.info.isPrivate && this.adapter.publicUrl) return this.adapter.publicUrl(entry.path);
+    if (appUrl) {
+      const base = appUrl.split('#')[0];
+      return `${base}#repo=${encodeURIComponent(this.adapter.slug || '')}&path=${encodeURIComponent(entry.path)}`;
+    }
+    return null;
+  }
+}
+
+/* ==== app/ui/app.js =================================================== */
+/**
+ * RepoVault — UI controller.
+ *
+ * Plain DOM, no framework, no build step. Everything here is wiring: state,
+ * rendering the grid/list, the upload tray, the viewer and the settings form.
+ * All the interesting logic lives in ../core/* and ../adapters/*, which are
+ * DOM-free and unit-tested.
+ */
+
+
+
+
+
+
+const $ = (id) => document.getElementById(id);
+const CFG_KEY = 'repovault.config.v1';
+
+const CHIPS = [
+  { key: 'all', label: 'All', icon: '🗂️' },
+  { key: 'image', label: 'Images', icon: '🖼️' },
+  { key: 'video', label: 'Videos', icon: '🎬' },
+  { key: 'pdf', label: 'PDFs', icon: '📕' },
+  { key: 'doc', label: 'Docs', icon: '📄' },
+  { key: 'audio', label: 'Audio', icon: '🎵' },
+  { key: 'archive', label: 'Archives', icon: '🗜️' },
+  { key: 'code', label: 'Code', icon: '⌨️' },
+  { key: 'encrypted', label: 'Encrypted', icon: '🔒' },
+  { key: 'other', label: 'Other', icon: '📦' },
+];
+
+const state = {
+  vault: null,
+  entries: [],
+  query: '',
+  kind: 'all',
+  folder: '',
+  sort: 'name',
+  view: 'grid',
+  password: '',
+  encryptUploads: false,
+  objectUrls: new Map(), // path -> object URL (thumbs + viewer)
+  thumbs: new Map(),     // path -> object URL for the grid
+  queue: [],
+  active: 0,
+  current: null,         // entry open in the viewer
+};
+
+/* ------------------------------------------------------------------ helpers */
+
+let toastTimer;
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+function show(el, on = true) { el.hidden = !on; }
+
+function alertBox(el, kind, html) {
+  el.hidden = !html;
+  el.className = 'alert' + (kind ? ' ' + kind : '');
+  el.innerHTML = html || '';
+}
+
+function confirmDialog(title, text, okLabel = 'Confirm') {
+  return new Promise((resolve) => {
+    $('confirm-title').textContent = title;
+    $('confirm-text').innerHTML = text;
+    $('confirm-ok').textContent = okLabel;
+    show($('confirm'), true);
+    const done = (value) => {
+      show($('confirm'), false);
+      $('confirm-ok').onclick = $('confirm-cancel').onclick = $('confirm-close').onclick = null;
+      resolve(value);
+    };
+    $('confirm-ok').onclick = () => done(true);
+    $('confirm-cancel').onclick = () => done(false);
+    $('confirm-close').onclick = () => done(false);
+  });
+}
+
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(label + ' copied to clipboard');
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { /* blocked */ }
+    document.body.removeChild(ta);
+    toast(ok ? label + ' copied' : 'Clipboard blocked — copy manually: ' + text.slice(0, 60));
+  }
+}
+
+function revokeAll() {
+  for (const url of [...state.thumbs.values(), ...state.objectUrls.values()]) URL.revokeObjectURL(url);
+  state.thumbs.clear();
+  state.objectUrls.clear();
+}
+
+/* ------------------------------------------------------------------- config */
+
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem(CFG_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveConfig(cfg) {
+  try {
+    if (cfg && cfg.remember) localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    else localStorage.removeItem(CFG_KEY);
+  } catch { /* storage blocked — session-only mode */ }
+}
+
+function fillForm(cfg) {
+  if (!cfg) return;
+  $('s-backend').value = cfg.backend || 'github';
+  $('s-owner').value = cfg.owner || '';
+  $('s-repo').value = cfg.repo || '';
+  $('s-branch').value = cfg.branch || '';
+  $('s-token').value = cfg.token || '';
+  $('s-remember').checked = !!cfg.remember;
+}
+
+function readForm() {
+  return {
+    backend: $('s-backend').value,
+    owner: $('s-owner').value.trim(),
+    repo: $('s-repo').value.trim(),
+    branch: $('s-branch').value.trim(),
+    token: $('s-token').value.trim(),
+    remember: $('s-remember').checked,
+  };
+}
+
+/* ------------------------------------------------------------------ connect */
+
+async function connect(cfg) {
+  const errBox = $('setup-error');
+  alertBox(errBox, '', '');
+  const label = $('connect-label');
+  const btn = $('connect-btn');
+  btn.disabled = true;
+  label.textContent = 'Connecting…';
+
+  let adapter;
+  if (cfg.backend === 'memory') {
+    adapter = new MemoryAdapter();
+  } else {
+    if (!cfg.owner || !cfg.repo) {
+      btn.disabled = false; label.textContent = 'Connect vault';
+      return alertBox(errBox, 'warn', 'Owner and repository are required — or hit <b>Try the demo vault</b>.');
+    }
+    if (!cfg.token) {
+      btn.disabled = false; label.textContent = 'Connect vault';
+      return alertBox(errBox, 'warn', 'A fine-grained token with <b>Contents: Read and write</b> is required. See "How to set this up" below.');
+    }
+    adapter = new GitHubAdapter({ owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, token: cfg.token });
+  }
+
+  const vault = new Vault({ adapter });
+  try {
+    const info = await vault.connect();
+    state.vault = vault;
+    state.entries = vault.entries;
+    saveConfig(cfg);
+    renderChrome();
+    show($('setup-screen'), false);
+    show($('app-screen'), true);
+    show($('settings-btn'), true);
+    render();
+    const empty = vault.entries.filter((e) => !e.system).length === 0;
+    show($('empty-repo-note'), cfg.backend === 'github' && empty);
+    toast(cfg.backend === 'memory' ? 'Demo vault ready — nothing leaves this browser' : `Connected to ${info.fullName}`);
+    handleDeepLink();
+  } catch (err) {
+    state.vault = null;
+    show($('app-screen'), false);
+    show($('setup-screen'), true);
+    alertBox(errBox, '', `<b>Couldn't connect.</b> ${err.message}
+      ${err.code === 'auth' ? '\nCheck the token has Contents: Read and write on this exact repository.' : ''}`);
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Connect vault';
+  }
+}
+
+/* ------------------------------------------------------------------ chrome */
+
+function renderChrome() {
+  const info = state.vault.info;
+  show($('engine-chip'), true);
+  $('engine-name').textContent = state.vault.adapter.id === 'memory'
+    ? 'Demo vault · this browser'
+    : `${info.fullName}${info.isPrivate ? ' · private' : ' · public'}`;
+  $('engine-dot').className = 'dot' + (state.vault.adapter.id === 'memory' ? ' demo' : info.isPrivate ? '' : ' bad');
+  $('engine-chip').title = state.vault.adapter.id === 'memory'
+    ? 'Demo mode: files live in localStorage and vanish when you clear site data.'
+    : info.isPrivate ? 'Private repo: only someone with a token can read these files.' : 'Public repo: anyone with the link can read these files — use Encrypt uploads for anything private.';
+
+  const usage = state.vault.usage;
+  show($('usage-chip'), !!usage && state.vault.adapter.id !== 'memory');
+  if (usage && state.vault.adapter.id !== 'memory') {
+    const pct = Math.min(100, (usage.usedBytes / usage.softLimitBytes) * 100);
+    $('usage-meter').style.width = Math.max(pct, usage.usedBytes ? 2 : 0) + '%';
+    $('usage-meter').style.background = pct > 85 ? 'var(--bad)' : pct > 60 ? 'var(--warn)' : 'var(--grad)';
+    $('usage-text').textContent = `${formatBytes(usage.usedBytes)} / 1 GB`;
+    $('usage-chip').title = `Repo size ${formatBytes(usage.usedBytes)} — GitHub recommends staying under 1 GB (5 GB strongly recommended).`;
+  }
+  show($('lock-btn'), state.vault.hasEncryptedFiles && !!state.password);
+  show($('enc-note'), state.vault.hasEncryptedFiles && !state.password);
+  show($('empty-repo-note'), state.vault.adapter.id !== 'memory' && state.entries.filter((e) => !e.system).length === 0);
+  show($('trunc-warn'), !!state.vault.truncated);
+  $('footer-note').textContent = state.vault.adapter.id === 'memory'
+    ? 'Demo mode: files stay in this browser only.'
+    : `Backend: ${state.vault.adapter.slug}.`;
+}
+
+/* --------------------------------------------------------------- rendering */
+
+function visibleEntries() {
+  return state.vault.list({ query: state.query, kind: state.kind, folder: state.folder, sort: state.sort });
+}
+
+function render() {
+  if (!state.vault) return;
+  renderChrome();
+  renderChips();
+  renderFolders();
+  renderList();
+}
+
+function renderChips() {
+  const all = state.vault.entries.filter((e) => !e.system);
+  const counts = { all: all.length, encrypted: all.filter((e) => e.encrypted).length };
+  for (const e of all) counts[e.kind] = (counts[e.kind] || 0) + 1;
+  const html = CHIPS.map((c) => {
+    const n = counts[c.key] || 0;
+    if (!n && c.key !== 'all') return '';
+    return `<button class="filt" data-kind="${c.key}" aria-pressed="${state.kind === c.key}">${c.icon} ${c.label} <b>${n}</b></button>`;
+  }).join('');
+  const box = $('kind-chips');
+  box.innerHTML = html;
+  box.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => {
+    state.kind = btn.dataset.kind;
+    render();
+  }));
+}
+
+function renderFolders() {
+  const sel = $('folder-select');
+  const folders = state.vault.folders();
+  const current = state.folder;
+  sel.innerHTML = '<option value="">All folders</option>' +
+    folders.map((f) => `<option value="${f}">${f}</option>`).join('');
+  sel.value = folders.includes(current) ? current : '';
+  state.folder = sel.value;
+  show(sel, folders.length > 0);
+}
+
+function iconFor(entry) {
+  if (entry.encrypted) return '🔒';
+  return { image: '🖼️', video: '🎬', audio: '🎵', pdf: '📕', doc: '📄', archive: '🗜️', code: '⌨️' }[entry.kind] || '📦';
+}
+
+function sizeBadge(entry) {
+  if (entry.size > LIMITS.WARN_FILE_BYTES) return '<span class="badge big">big</span>';
+  return '';
+}
+
+function renderList() {
+  const items = visibleEntries();
+  const grid = $('grid');
+  const list = $('list');
+  show($('empty-state'), items.length === 0);
+  show(grid, state.view === 'grid');
+  show(list, state.view === 'list');
+  $('view-grid').setAttribute('aria-pressed', String(state.view === 'grid'));
+  $('view-list').setAttribute('aria-pressed', String(state.view === 'list'));
+
+  if (state.view === 'grid') {
+    grid.innerHTML = items.map((e) => `
+      <button class="tile" data-path="${escapeAttr(e.path)}">
+        <div class="thumb" data-thumb="${escapeAttr(e.path)}">${iconFor(e)}</div>
+        <div class="nm">${escapeHtml(e.displayName)}</div>
+        <div class="mt">
+          <span>${formatBytes(e.size)}</span>
+          ${e.encrypted ? '<span class="badge enc">encrypted</span>' : ''}
+          ${sizeBadge(e)}
+        </div>
+      </button>`).join('');
+  } else {
+    list.innerHTML = items.map((e) => `
+      <div class="rowitem" data-path="${escapeAttr(e.path)}">
+        <div class="ico">${iconFor(e)}</div>
+        <div>
+          <div>${escapeHtml(e.displayName)}</div>
+          <div class="sub">${escapeHtml(e.folder || '/')}</div>
+        </div>
+        <div class="sub kind">${e.kind}</div>
+        <div class="sub when">${formatBytes(e.size)}</div>
+        <div class="acts">
+          ${e.encrypted ? '<span class="badge enc">enc</span>' : ''}
+        </div>
+      </div>`).join('');
+  }
+
+  const open = (path) => {
+    const entry = state.vault.entries.find((e) => e.path === path);
+    if (entry) openViewer(entry);
+  };
+  for (const node of document.querySelectorAll('[data-path]')) {
+    node.addEventListener('click', () => open(node.dataset.path));
+  }
+  if (state.view === 'grid') observeThumbs();
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+const escapeAttr = escapeHtml;
+
+/* -------------------------------------------------------------- thumbnails */
+
+let thumbObserver = null;
+function observeThumbs() {
+  if (!('IntersectionObserver' in window)) return lazyThumbs();
+  if (!thumbObserver) {
+    thumbObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          thumbObserver.unobserve(e.target);
+          enqueueThumb(e.target.dataset.thumb, e.target);
+        }
+      }
+    }, { rootMargin: '240px' });
+  }
+  document.querySelectorAll('[data-thumb]').forEach((el) => thumbObserver.observe(el));
+}
+
+function lazyThumbs() {
+  // no IntersectionObserver: just load the first few so the UI still works
+  const els = [...document.querySelectorAll('[data-thumb]')].slice(0, 24);
+  els.forEach((el) => enqueueThumb(el.dataset.thumb, el));
+}
+
+function enqueueThumb(path, el) {
+  if (state.thumbs.has(path)) return paintThumb(el, state.thumbs.get(path));
+  state.queue.push({ path, el });
+  pump();
+}
+
+async function pump() {
+  const MAX = 3;
+  while (state.active < MAX && state.queue.length) {
+    const job = state.queue.shift();
+    state.active++;
+    loadThumb(job.path, job.el).finally(() => { state.active--; pump(); });
+  }
+}
+
+async function loadThumb(path, el) {
+  const entry = state.vault.entries.find((e) => e.path === path);
+  if (!entry || entry.kind !== 'image' || entry.encrypted) return; // only plain images get real thumbs
+  try {
+    if (state.thumbs.has(path)) return paintThumb(el, state.thumbs.get(path));
+    const adapter = state.vault.adapter;
+    const canUseRaw = adapter.publicUrl && !state.vault.info.isPrivate;
+    if (canUseRaw) {
+      state.thumbs.set(path, adapter.publicUrl(path));
+      return paintThumb(el, state.thumbs.get(path));
+    }
+    const bytes = await state.vault.readBytes(entry);
+    const url = URL.createObjectURL(new Blob([bytes], { type: entry.mime }));
+    state.thumbs.set(path, url);
+    paintThumb(el, url);
+  } catch { /* keep the emoji placeholder */ }
+}
+
+function paintThumb(el, url) {
+  if (!el || !url) return;
+  el.innerHTML = `<img loading="lazy" alt="" src="${url}" />`;
+}
+
+/* ------------------------------------------------------------------ viewer */
+
+function closeViewer() {
+  show($('viewer'), false);
+  $('viewer-media').innerHTML = '';
+  for (const [key, url] of state.objectUrls) { URL.revokeObjectURL(url); state.objectUrls.delete(key); }
+  state.current = null;
+}
+
+async function openViewer(entry) {
+  state.current = entry;
+  show($('viewer'), true);
+  $('viewer-title').textContent = entry.displayName;
+  $('viewer-meta').innerHTML = [
+    formatBytes(entry.size),
+    entry.folder || '/',
+    entry.kind,
+    entry.encrypted ? 'encrypted' : null,
+  ].filter(Boolean).map((t) => `<span class="chip">${escapeHtml(t)}</span>`).join('');
+  $('viewer-status').textContent = '';
+  show($('viewer-password-wrap'), entry.encrypted && !state.password);
+  $('viewer-password').value = '';
+  renderMedia(entry);
+}
+
+async function renderMedia(entry) {
+  const box = $('viewer-media');
+  const status = $('viewer-status');
+  const needsPassword = entry.encrypted && !state.password;
+  if (needsPassword) {
+    box.innerHTML = `<div class="ph">🔒 This file is encrypted.<br />Enter the vault password to decrypt it in this tab.</div>`;
+    return;
+  }
+
+  const adapter = state.vault.adapter;
+  const canUseRaw = adapter.publicUrl && !state.vault.info.isPrivate && !entry.encrypted;
+
+  // Fast path: public repos stream straight from raw.githubusercontent.com
+  if (canUseRaw && ['image', 'video', 'audio', 'pdf'].includes(entry.kind)) {
+    const url = adapter.publicUrl(entry.path);
+    box.innerHTML = mediaMarkup(entry, url);
+    return;
+  }
+  if (canUseRaw && (entry.kind === 'doc' || entry.kind === 'code') && isTextLike(entry.displayName)) {
+    status.textContent = 'loading text…';
+    try {
+      const res = await fetch(adapter.publicUrl(entry.path));
+      const text = await res.text();
+      box.innerHTML = `<pre>${escapeHtml(text.slice(0, 200_000))}</pre>`;
+    } catch (err) {
+      box.innerHTML = `<div class="ph">Couldn't load the preview: ${escapeHtml(err.message)}</div>`;
+    }
+    status.textContent = '';
+    return;
+  }
+
+  // Everything else: fetch through the API (works for private repos and decryption)
+  box.innerHTML = `<div class="ph">Loading…</div>`;
+  try {
+    if (['doc', 'code'].includes(entry.kind) && isTextLike(entry.displayName)) {
+      const text = await state.vault.text(entry, { password: state.password });
+      box.innerHTML = `<pre>${escapeHtml(text)}</pre>`;
+      status.textContent = '';
+      return;
+    }
+    const started = Date.now();
+    const { blob, name, kind } = await state.vault.download(entry, {
+      password: state.password,
+      onProgress: (f) => { status.textContent = `decrypting ${Math.round(f * 100)}%`; },
+    });
+    const url = URL.createObjectURL(blob);
+    state.objectUrls.set(entry.path, url);
+    box.innerHTML = mediaMarkup({ ...entry, kind, displayName: name, mime: blob.type }, url);
+    status.textContent = `fetched in ${((Date.now() - started) / 1000).toFixed(1)}s · ${formatBytes(blob.size)}`;
+  } catch (err) {
+    box.innerHTML = `<div class="ph">${err.code === 'bad-password' ? '🔑 Wrong vault password.' : '⚠️ ' + escapeHtml(err.message)}</div>`;
+    if (err.code === 'bad-password' || err.code === 'password-required') {
+      show($('viewer-password-wrap'), true);
+      state.password = '';
+    }
+    status.textContent = '';
+  }
+}
+
+function mediaMarkup(entry, url) {
+  const kind = entry.kind;
+  if (kind === 'image') return `<img alt="${escapeAttr(entry.displayName)}" src="${url}" />`;
+  if (kind === 'video') return `<video controls playsinline preload="metadata" src="${url}"></video>`;
+  if (kind === 'audio') return `<audio controls src="${url}"></audio>`;
+  if (kind === 'pdf') return `<iframe title="${escapeAttr(entry.displayName)}" src="${url}"></iframe>`;
+  return `<div class="ph">No inline preview for ${escapeHtml(entry.kind)} files.<br />Use <b>Download</b> to save it.<br /><br />
+    <a href="${url}" download="${escapeAttr(entry.displayName)}">Download ${escapeHtml(entry.displayName)}</a></div>`;
+}
+
+async function unlockViewer() {
+  const password = $('viewer-password').value;
+  if (!password) return toast('Type the vault password first');
+  $('viewer-unlock').disabled = true;
+  try {
+    await state.vault.ensureKey(password); // derives once, cached for the session
+    state.password = password;
+    $('vault-password').value = password;
+    show($('viewer-password-wrap'), false);
+    show($('lock-btn'), true);
+    renderChrome();
+    await renderMedia(state.current);
+    toast('Vault unlocked for this tab');
+  } catch (err) {
+    toast(err.code === 'bad-password' ? 'Wrong password' : err.message);
+  } finally {
+    $('viewer-unlock').disabled = false;
+  }
+}
+
+/* ------------------------------------------------------------------ uploads */
+
+function showTray(on = true) { show($('tray'), on); }
+
+function trayItem(name, size) {
+  const li = document.createElement('li');
+  li.innerHTML = `
+    <div class="lbl"><b title="${escapeAttr(name)}">${escapeHtml(name)}</b><span>${formatBytes(size)}</span></div>
+    <div class="bar"><i></i></div>`;
+  $('tray-list').prepend(li);
+  return li;
+}
+
+function setTrayProgress(li, fraction) {
+  li.querySelector('.bar i').style.width = Math.round(fraction * 100) + '%';
+}
+
+function setTrayDone(li, entry) {
+  li.querySelector('.bar').classList.add('done');
+  li.querySelector('.bar i').style.width = '100%';
+  li.querySelector('.lbl span').textContent = entry.encrypted ? 'encrypted ✓' : 'done ✓';
+}
+
+function setTrayFail(li, err) {
+  li.querySelector('.bar').classList.add('fail');
+  li.querySelector('.lbl span').textContent = err.code === 'too-large' ? 'too big ✗' : 'failed ✗';
+  li.title = err.message;
+}
+
+async function uploadFiles(fileList, folder) {
+  if (!state.vault) return;
+  const files = [...fileList];
+  if (!files.length) return;
+  if (state.encryptUploads && !state.password) {
+    show($('encrypt-bar'), true);
+    $('vault-password').focus();
+    return toast('Set a vault password first (or turn encryption off)');
+  }
+  $('tray-title').textContent = `Uploading ${files.length} file${files.length > 1 ? 's' : ''}`;
+  showTray(true);
+  let okCount = 0, failCount = 0;
+
+  for (const file of files) {
+    const li = trayItem(file.name, file.size);
+    if (file.size > LIMITS.MAX_FILE_BYTES) {
+      setTrayFail(li, { code: 'too-large', message: `>${formatBytes(LIMITS.MAX_FILE_BYTES)}` });
+      failCount++;
+      continue;
+    }
+    try {
+      const entry = await state.vault.upload(file, {
+        folder: folder ?? state.folder ?? '',
+        encrypt: state.encryptUploads,
+        password: state.password,
+        onProgress: (f) => setTrayProgress(li, f),
+      });
+      setTrayDone(li, entry);
+      okCount++;
+    } catch (err) {
+      setTrayFail(li, err);
+      failCount++;
+      if (err.code === 'too-large' || err.code === 'quota') toast(err.message);
+    }
+  }
+
+  render();
+  if (okCount) toast(`${okCount} file${okCount > 1 ? 's' : ''} committed to ${state.vault.adapter.slug}`);
+  if (failCount && !okCount) toast('Upload failed — see the tray for details');
+  if (state.vault.truncated) show($('trunc-warn'), true);
+}
+
+/* ------------------------------------------------------------------- wiring */
+
+function wire() {
+  // ---- setup
+  $('s-backend').addEventListener('change', () => {
+    const demo = $('s-backend').value === 'memory';
+    show($('github-fields'), !demo);
+  });
+  $('connect-btn').addEventListener('click', () => connect(readForm()));
+  $('demo-btn').addEventListener('click', () => connect({ backend: 'memory', remember: true }));
+  $('settings-btn').addEventListener('click', () => {
+    show($('app-screen'), false);
+    show($('setup-screen'), true);
+    fillForm(loadConfig() || { backend: 'github', remember: true });
+  });
+
+  // ---- toolbar
+  $('search').addEventListener('input', (e) => { state.query = e.target.value; renderList(); });
+  $('folder-select').addEventListener('change', (e) => { state.folder = e.target.value; renderList(); });
+  $('sort-select').addEventListener('change', (e) => { state.sort = e.target.value; renderList(); });
+  $('view-grid').addEventListener('click', () => { state.view = 'grid'; renderList(); });
+  $('view-list').addEventListener('click', () => { state.view = 'list'; renderList(); });
+  $('upload-btn').addEventListener('click', () => $('file-input').click());
+  $('upload-folder-btn').addEventListener('click', () => $('folder-input').click());
+  $('file-input').addEventListener('change', (e) => { uploadFiles(e.target.files, ''); e.target.value = ''; });
+  $('folder-input').addEventListener('change', (e) => {
+    // keep the folder structure of the picked directory
+    const files = [...e.target.files];
+    for (const f of files) f.vaultFolder = f.webkitRelativePath ? f.webkitRelativePath.split('/').slice(0, -1).join('/') : '';
+    (async () => {
+      for (const f of files) await uploadFiles([f], f.vaultFolder);
+    })();
+    e.target.value = '';
+  });
+
+  $('refresh-btn').addEventListener('click', async () => {
+    try {
+      revokeAll();
+      await state.vault.refresh();
+      render();
+      toast('Vault index refreshed');
+    } catch (err) { toast('Refresh failed: ' + err.message); }
+  });
+
+  $('encrypt-toggle').addEventListener('click', () => {
+    state.encryptUploads = !state.encryptUploads;
+    $('encrypt-toggle').setAttribute('aria-pressed', String(state.encryptUploads));
+    show($('encrypt-bar'), state.encryptUploads || state.vault.hasEncryptedFiles);
+    if (state.encryptUploads) {
+      $('vault-password').focus();
+      toast('New uploads will be encrypted in this browser first');
+    }
+  });
+  $('vault-password').addEventListener('input', (e) => { state.password = e.target.value; show($('lock-btn'), !!state.password); });
+  $('lock-btn').addEventListener('click', () => {
+    state.vault.lock();
+    state.password = '';
+    $('vault-password').value = '';
+    show($('lock-btn'), false);
+    renderChrome();
+    toast('Vault locked — password forgotten');
+  });
+
+  // ---- drag & drop anywhere on the page
+  const drop = $('drop');
+  const isFileDrag = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  window.addEventListener('dragover', (e) => { if (isFileDrag(e)) { e.preventDefault(); drop.classList.add('over'); } });
+  window.addEventListener('dragleave', (e) => { if (e.target === document.documentElement) drop.classList.remove('over'); });
+  window.addEventListener('drop', (e) => {
+    if (!isFileDrag(e) || !state.vault) return;
+    e.preventDefault();
+    drop.classList.remove('over');
+    uploadFiles(e.dataTransfer.files, state.folder);
+  });
+  drop.addEventListener('click', () => $('file-input').click());
+
+  // ---- paste files
+  window.addEventListener('paste', (e) => {
+    if (!state.vault) return;
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) { e.preventDefault(); uploadFiles(files, state.folder); }
+  });
+
+  // ---- keyboard
+  window.addEventListener('keydown', (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+    if (e.key === 'Escape') { closeViewer(); show($('confirm'), false); return; }
+    if (typing) return;
+    if (e.key === '/') { e.preventDefault(); $('search').focus(); }
+    if (e.key === 'u' && state.vault) { e.preventDefault(); $('file-input').click(); }
+    if (e.key === 'r' && state.vault) { e.preventDefault(); $('refresh-btn').click(); }
+  });
+
+  // ---- viewer
+  $('viewer-close').addEventListener('click', closeViewer);
+  $('viewer').addEventListener('click', (e) => { if (e.target === $('viewer')) closeViewer(); });
+  $('viewer-unlock').addEventListener('click', unlockViewer);
+  $('viewer-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlockViewer(); });
+  $('viewer-download').addEventListener('click', async () => {
+    const entry = state.current;
+    if (!entry) return;
+    if (entry.encrypted && !state.password) return toast('Enter the vault password first');
+    try {
+      let url = state.objectUrls.get(entry.path);
+      if (!url) {
+        const { blob } = await state.vault.download(entry, { password: state.password });
+        url = URL.createObjectURL(blob);
+        state.objectUrls.set(entry.path, url);
+      }
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = entry.displayName;
+      document.body.appendChild(a); a.click(); a.remove();
+      toast('Download started');
+    } catch (err) { toast('Download failed: ' + err.message); }
+  });
+  $('viewer-share').addEventListener('click', async () => {
+    const entry = state.current;
+    if (!entry) return;
+    const url = state.vault.shareUrl(entry, location.href);
+    if (!url) return toast('This backend has no shareable URL');
+    await copyText(url, state.vault.info.isPrivate ? 'App link' : 'Raw link');
+    if (state.vault.info.isPrivate) toast('Private repo: whoever opens this needs their own token');
+    else if (entry.encrypted) toast('Public link — but the file is encrypted, so it is still unreadable without the password');
+  });
+  $('viewer-rename').addEventListener('click', async () => {
+    const entry = state.current;
+    if (!entry) return;
+    const next = window.prompt('New name', entry.displayName);
+    if (!next || next === entry.displayName) return;
+    try {
+      await state.vault.rename(entry, next);
+      closeViewer();
+      render();
+      toast('Renamed');
+    } catch (err) { toast('Rename failed: ' + err.message); }
+  });
+  $('viewer-delete').addEventListener('click', async () => {
+    const entry = state.current;
+    if (!entry) return;
+    const yes = await confirmDialog(
+      'Delete this file?',
+      `<b>${escapeHtml(entry.displayName)}</b> (${formatBytes(entry.size)}) will be removed from the repo's latest commit.
+       Note: git keeps history — the blob stays in the object store, so a <2 GB repo does not shrink. See the README for reclaiming space.`,
+      'Delete',
+    );
+    if (!yes) return;
+    try {
+      await state.vault.remove(entry);
+      closeViewer();
+      render();
+      toast('Deleted from the branch');
+    } catch (err) { toast('Delete failed: ' + err.message); }
+  });
+
+  // ---- tray
+  $('tray-close').addEventListener('click', () => showTray(false));
+
+  // ---- deep link: #repo=owner%2Fname&path=uploads%2Ffile.png
+  window.addEventListener('hashchange', handleDeepLink);
+}
+
+function handleDeepLink() {
+  const hash = location.hash.replace(/^#/, '');
+  if (!hash.includes('path=')) return;
+  const params = new URLSearchParams(hash);
+  const path = params.get('path');
+  if (!path || !state.vault) return;
+  const entry = state.vault.entries.find((e) => e.path === decodeURIComponent(path));
+  if (entry) openViewer(entry);
+}
+
+/* -------------------------------------------------------------------- boot */
+
+function mount() {
+  wire();
+  $('s-remember').checked = true;
+  const cfg = loadConfig();
+  if (cfg) {
+    fillForm(cfg);
+    if ($('s-backend').value === 'memory') show($('github-fields'), false);
+    connect(cfg); // auto-reconnect with the remembered token
+  }
+  if (!('clipboard' in navigator)) toast('Clipboard API unavailable — copy links manually');
+}
+
+if (typeof document !== 'undefined' && document.getElementById && document.getElementById('setup-screen')) {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+  else mount();
+}
+
+/* expose the core for console tinkering and the bundle integrity test */
+globalThis.RepoVault = { Vault, GitHubAdapter, GitHubError, MemoryAdapter, encryptBytes, decryptBytes, deriveVaultKey, isEncryptedBytes, b64encode, b64decode, formatBytes, kindOf, LIMITS, mount };
+})();
+</script>
+</body>
+</html>

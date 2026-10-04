@@ -1,0 +1,14 @@
+# Security headers for hosts that honour them (Netlify, Cloudflare Pages).
+# GitHub Pages ignores this file — the app is a static bundle with no backend,
+# so this is belt-and-braces. 'unsafe-inline' is required because the single-file
+# build (repovault.html) inlines its script and both builds inline their CSS.
+# All user-controlled strings (filenames) are HTML-escaped before rendering, and
+# the only network destinations allowed are GitHub's API and raw host.
+
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://raw.githubusercontent.com; media-src blob: https://raw.githubusercontent.com; frame-src blob: https://raw.githubusercontent.com; connect-src 'self' https://api.github.com https://raw.githubusercontent.com; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
