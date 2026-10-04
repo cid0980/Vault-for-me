@@ -11,6 +11,10 @@ import { LIMITS, formatBytes, timeAgo, kindOf, isTextLike } from '../core/util.j
 import { GitHubAdapter } from '../adapters/github.js';
 import { MemoryAdapter } from '../adapters/memory.js';
 import { Vault } from '../core/vault.js';
+import {
+  validatePasscode, createPasscode, verifyPasscode, AutoLock,
+  readLock, writeLock, clearLock, isSessionUnlocked, markSessionUnlocked, clearSession,
+} from '../core/lock.js';
 
 const $ = (id) => document.getElementById(id);
 const CFG_KEY = 'repovault.config.v1';
@@ -43,6 +47,9 @@ const state = {
   queue: [],
   active: 0,
   current: null,         // entry open in the viewer
+  lockRecord: null,      // passcode lock config (localStorage)
+  autoLock: null,        // AutoLock instance
+  activityBound: false,
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -658,6 +665,7 @@ function wire() {
 
   // ---- keyboard
   window.addEventListener('keydown', (e) => {
+    if (!$('lock-screen').hidden) return; // the lock screen owns the keyboard
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
     if (e.key === 'Escape') { closeViewer(); show($('confirm'), false); return; }
     if (typing) return;
@@ -745,16 +753,307 @@ function handleDeepLink() {
   if (entry) openViewer(entry);
 }
 
+/* ------------------------------------------------------- PWA: install + update */
+
+/** Already running as an installed app? */
+function isStandalone() {
+  const media = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  return !!media || window.navigator.standalone === true;
+}
+
+function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS masquerades as macOS
+}
+
+let deferredInstall = null;
+let swRegistration = null;
+let updateRequested = false;
+
+function wireInstall() {
+  const btn = $('install-btn');
+  if (isStandalone()) return;                       // nothing to offer — it's already installed
+
+  if (isIOS()) { btn.hidden = false; btn.dataset.mode = 'ios'; }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();                             // Chrome's mini-infobar → our own button
+    deferredInstall = e;
+    btn.hidden = false;
+    btn.dataset.mode = 'prompt';
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstall = null;
+    btn.hidden = true;
+    toast('Installed — open RepoVault from your home screen');
+  });
+
+  btn.addEventListener('click', async () => {
+    if (btn.dataset.mode === 'prompt' && deferredInstall) {
+      deferredInstall.prompt();
+      try {
+        const choice = await deferredInstall.userChoice;
+        if (choice && choice.outcome === 'accepted') {
+          toast('Installing…');
+          btn.hidden = true;
+        }
+      } catch { /* the user dismissed it — leave the button in place */ }
+      deferredInstall = null;
+      return;
+    }
+    show($('install-sheet'), true);                 // iOS and manual instructions
+  });
+
+  $('install-close').addEventListener('click', () => show($('install-sheet'), false));
+  $('install-sheet').addEventListener('click', (e) => { if (e.target === $('install-sheet')) show($('install-sheet'), false); });
+}
+
+function registerSW() {
+  // service workers need a secure context; file:// has none, and that's fine
+  if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
+
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    swRegistration = reg;
+
+    // a worker is already waiting from a previous visit
+    if (reg.waiting && navigator.serviceWorker.controller) showUpdateChip(true);
+
+    reg.addEventListener('updatefound', () => {
+      const worker = reg.installing;
+      if (!worker) return;
+      worker.addEventListener('statechange', () => {
+        if (worker.state === 'installed' && navigator.serviceWorker.controller) showUpdateChip(true);
+      });
+    });
+  }).catch((err) => {
+    // never let offline caching break the app itself
+    console.warn('[repovault] service worker registration failed:', err && err.message);
+  });
+
+  // after the waiting worker takes over, reload once so the page matches it
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!updateRequested) return;                   // first install: no reload needed
+    location.reload();
+  });
+
+  $('update-chip').addEventListener('click', () => {
+    const waiting = swRegistration && swRegistration.waiting;
+    if (!waiting) { location.reload(); return; }
+    updateRequested = true;
+    waiting.postMessage('SKIP_WAITING');
+  });
+}
+
+function showUpdateChip(on) {
+  const chip = $('update-chip');
+  if (!chip) return;
+  if (on && chip.hidden) toast('A new version is ready — tap Reload to update');
+  show(chip, on);
+}
+
+/* --------------------------------------------------------------- screen lock */
+
+function showLockScreen() {
+  show($('lock-screen'), true);
+  show($('setup-screen'), false);
+  show($('app-screen'), false);
+  show($('settings-btn'), false);
+  show($('engine-chip'), false);
+  show($('usage-chip'), false);
+  show($('tray'), false);
+  show($('viewer'), false);
+  state.autoLock?.stop();
+  setTimeout(() => { try { $('lock-input').focus({ preventScroll: true }); } catch { /* focus needs a user gesture sometimes */ } }, 60);
+}
+
+/** Things that must not survive a lock: keys, plaintext URLs, rendered listings. */
+function wipeSession() {
+  try { state.vault?.lock(); } catch { /* adapter may already be gone */ }
+  state.vault = null;
+  state.entries = [];
+  state.queue = [];
+  state.current = null;
+  state.password = '';
+  state.encryptUploads = false;
+  $('vault-password').value = '';
+  $('encrypt-toggle').setAttribute('aria-pressed', 'false');
+  show($('encrypt-bar'), false);
+  revokeAll();
+  $('grid').innerHTML = '';
+  $('list').innerHTML = '';
+  $('kind-chips').innerHTML = '';
+  $('viewer-media').innerHTML = '';
+}
+
+function lockNow(reason = 'manual') {
+  if (!state.lockRecord) return;
+  clearSession(sessionStorage);
+  wipeSession();
+  showLockScreen();
+  toast(reason === 'timeout' ? 'Locked after inactivity' : 'Vault locked');
+}
+
+async function tryUnlock() {
+  const input = $('lock-input');
+  const btn = $('lock-unlock');
+  const errBox = $('lock-error');
+  alertBox(errBox, '', '');
+  const passcode = input.value;
+  if (!passcode) return alertBox(errBox, 'warn', 'Enter your passcode.');
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Checking…';
+  try {
+    const okPass = await verifyPasscode(passcode, state.lockRecord);
+    if (!okPass) {
+      alertBox(errBox, '', 'Wrong passcode.');
+      input.select();
+      return;
+    }
+    markSessionUnlocked(sessionStorage);
+    input.value = '';
+    show($('lock-screen'), false);
+    toast('Unlocked');
+    await resume();
+  } catch (err) {
+    alertBox(errBox, '', err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function startAutoLock() {
+  if (!state.lockRecord) return;
+  const timeoutMs = Number(state.lockRecord.timeoutMs ?? 15 * 60_000);
+  if (!state.autoLock) state.autoLock = new AutoLock({ timeoutMs, onLock: (reason) => lockNow(reason) });
+  else state.autoLock.timeoutMs = timeoutMs;
+  state.autoLock.start();
+
+  if (!state.activityBound) {
+    state.activityBound = true;
+    const bump = () => state.autoLock && state.autoLock.armed && state.autoLock.touch();
+    ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel'].forEach((ev) =>
+      window.addEventListener(ev, bump, { passive: true }));
+    document.addEventListener('visibilitychange', () => {
+      if (!state.autoLock || !state.autoLock.armed) return;
+      if (document.visibilityState === 'hidden') state.autoLock.touch();          // pause while backgrounded
+      else if (state.autoLock.remainingMs <= 0) lockNow('timeout');               // expired while away
+    });
+  }
+}
+
+function renderSecurity() {
+  const has = !!state.lockRecord;
+  show($('lock-remove'), has);
+  show($('lock-now'), has);
+  $('lock-save').textContent = has ? 'Change passcode' : 'Set passcode';
+  if (has) $('lock-timeout').value = String(state.lockRecord.timeoutMs ?? 15 * 60_000);
+}
+
+function wireLock() {
+  $('lock-save').addEventListener('click', async () => {
+    const status = $('lock-status');
+    const p1 = $('lock-pass').value;
+    const p2 = $('lock-pass2').value;
+    if (p1 !== p2) return alertBox(status, '', 'The two passcodes do not match.');
+    const check = validatePasscode(p1);
+    if (!check.ok) return alertBox(status, '', check.message);
+    try {
+      const record = await createPasscode(p1, { timeoutMs: Number($('lock-timeout').value) });
+      writeLock(localStorage, record);
+      state.lockRecord = record;
+      markSessionUnlocked(sessionStorage);
+      startAutoLock();
+      $('lock-pass').value = '';
+      $('lock-pass2').value = '';
+      alertBox(status, 'ok', 'Passcode set. It will be asked for next time this page loads, and after the inactivity window.');
+      renderSecurity();
+    } catch (err) {
+      alertBox(status, '', err.message);
+    }
+  });
+
+  $('lock-remove').addEventListener('click', async () => {
+    const yes = await confirmDialog(
+      'Remove the screen lock?',
+      'Anyone who picks up this device can open RepoVault again. The passcode is not used to encrypt files, so nothing becomes unreadable by removing it.',
+      'Remove lock',
+    );
+    if (!yes) return;
+    clearLock(localStorage);
+    state.lockRecord = null;
+    state.autoLock?.stop();
+    state.autoLock = null;
+    alertBox($('lock-status'), 'ok', 'Screen lock removed.');
+    renderSecurity();
+  });
+
+  $('lock-now').addEventListener('click', () => lockNow('manual'));
+  $('lock-unlock').addEventListener('click', tryUnlock);
+  $('lock-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
+
+  $('lock-forgot').addEventListener('click', async () => {
+    const yes = await confirmDialog(
+      'Remove the lock without the passcode?',
+      'This clears the lock <b>and</b> the saved GitHub token and settings in this browser — a passcode you cannot enter should not leave your token usable by someone else. Files already in your repository are untouched.',
+      'Remove lock + settings',
+    );
+    if (!yes) return;
+    clearLock(localStorage);
+    saveConfig(null);
+    state.lockRecord = null;
+    state.autoLock?.stop();
+    state.autoLock = null;
+    $('s-token').value = '';
+    $('lock-input').value = '';
+    show($('lock-screen'), false);
+    show($('app-screen'), false);
+    show($('setup-screen'), true);
+    alertBox($('setup-error'), 'warn', 'Lock and saved credentials cleared. Paste your token to reconnect — your files in the repo are safe.');
+    renderSecurity();
+  });
+}
+
 /* -------------------------------------------------------------------- boot */
 
-export function mount() {
-  wire();
-  $('s-remember').checked = true;
+/** Connect (or restore) the session. Called on load and after every unlock. */
+async function resume() {
+  if (state.lockRecord) {
+    markSessionUnlocked(sessionStorage);
+    startAutoLock();
+  }
+  renderSecurity();
+  if (state.vault) {                       // already connected, just re-show
+    show($('setup-screen'), false);
+    show($('app-screen'), true);
+    show($('settings-btn'), true);
+    render();
+    return;
+  }
   const cfg = loadConfig();
   if (cfg) {
     fillForm(cfg);
     if ($('s-backend').value === 'memory') show($('github-fields'), false);
-    connect(cfg); // auto-reconnect with the remembered token
+    await connect(cfg);                    // auto-reconnect with the remembered token
+  } else {
+    show($('setup-screen'), true);
+  }
+}
+
+export function mount() {
+  wire();
+  wireLock();
+  wireInstall();
+  registerSW();
+  $('s-remember').checked = true;
+  state.lockRecord = readLock(localStorage);
+
+  if (state.lockRecord && !isSessionUnlocked(sessionStorage)) {
+    showLockScreen();
+  } else {
+    resume();
   }
   if (!('clipboard' in navigator)) toast('Clipboard API unavailable — copy links manually');
 }

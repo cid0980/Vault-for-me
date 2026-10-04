@@ -10,6 +10,8 @@ const suites = [
   'tests/crypto.test.mjs',
   'tests/github.test.mjs',
   'tests/vault.test.mjs',
+  'tests/lock.test.mjs',
+  'tests/pwa.test.mjs',
   'tests/bundle.test.mjs',
 ];
 

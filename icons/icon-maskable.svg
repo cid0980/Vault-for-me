@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="RepoVault maskable icon">
+  <title>RepoVault (maskable)</title>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffc14d"/>
+      <stop offset="0.55" stop-color="#ff8a00"/>
+      <stop offset="1" stop-color="#ff4d00"/>
+    </linearGradient>
+  </defs>
+  <!-- full-bleed background: Android crops this to a circle/squircle, so the art
+       is scaled to ~72% and centred inside the safe zone. -->
+  <rect width="512" height="512" fill="#0a0a0b"/>
+  <g transform="translate(256 256) scale(0.72) translate(-256 -256)">
+    <rect x="96" y="86" width="320" height="340" rx="44" fill="none" stroke="url(#g)" stroke-width="30"/>
+    <circle cx="256" cy="256" r="62" fill="none" stroke="url(#g)" stroke-width="28"/>
+    <circle cx="256" cy="256" r="16" fill="url(#g)"/>
+    <path d="M256 158v36M256 318v36M158 256h36M318 256h36" stroke="url(#g)" stroke-width="24" stroke-linecap="round"/>
+  </g>
+</svg>

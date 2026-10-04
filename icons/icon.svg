@@ -2,13 +2,13 @@
   <title>RepoVault</title>
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#22d3ee"/>
-      <stop offset="0.55" stop-color="#6366f1"/>
-      <stop offset="1" stop-color="#a855f7"/>
+      <stop offset="0" stop-color="#ffc14d"/>
+      <stop offset="0.55" stop-color="#ff8a00"/>
+      <stop offset="1" stop-color="#ff4d00"/>
     </linearGradient>
     <linearGradient id="bg" x1="0" y1="0" x2="0.2" y2="1">
-      <stop offset="0" stop-color="#121a38"/>
-      <stop offset="1" stop-color="#080b18"/>
+      <stop offset="0" stop-color="#1a1512"/>
+      <stop offset="1" stop-color="#0a0a0b"/>
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="118" fill="url(#bg)"/>

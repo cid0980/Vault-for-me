@@ -58,6 +58,30 @@ Your token is stored in `localStorage` only if you tick *Remember this browser*.
 - **Cheap rename/delete.** Both are one tree commit — a 90 MB video is *never* re-uploaded to move it.
 - **Folder view, search, filters, sort, grid/list toggle** — all local, instant, no round-trips.
 - **Demo mode.** Try the entire app (upload, preview, encrypt, rename, delete) with zero GitHub account, backed by localStorage.
+- **Installable app (PWA).** Add it to your home screen and it opens fullscreen with its own icon, works offline, and updates itself with an in-app "Reload to update" chip. Android/desktop get a real install prompt; iOS gets the two-tap Safari instructions. The service worker only ever caches its own shell — uploads and every GitHub API call bypass it entirely.
+- **Screen lock + auto-lock.** Optional passcode gate (PBKDF2-hashed, 150k iterations, constant-time compare) with an inactivity timer, so a borrowed phone can't read your file list or reuse the saved token. It's a screen gate, not encryption — the README says so out loud.
+
+## Install it on your phone
+
+Once Pages is enabled, open the site and:
+
+| Platform | How |
+| --- | --- |
+| **Android (Chrome/Edge)** | A blue **Install app** button appears in the header (or ⋮ → *Install app*). One tap. |
+| **iPhone / iPad** | Tap **Share → Add to Home Screen → Add**. Safari only — iOS Chrome can't install PWAs. The app shows these steps if you're on iOS. |
+| **Desktop (Chrome/Edge)** | Install icon in the address bar, or **Install app** in the header. |
+
+What you get: standalone window with no browser chrome, its own home-screen icon, **offline support** (the app shell opens with no signal — GitHub calls still need data, obviously), and automatic updates with a "Reload to update" prompt when a new version is cached.
+
+Installability checklist this repo satisfies: HTTPS-hosted, `manifest.webmanifest` with `name`/`start_url`/`display: standalone`/`theme_color` plus 192px, 512px and **maskable** icons, an `apple-touch-icon` for iOS, and a service worker with a `fetch` handler. All of it is asserted in `tests/pwa.test.mjs`.
+
+```
+sw.js                  app-shell cache: network-first navigations, cache-first
+                       assets, versioned cache, stale-cache eviction.
+                       Refuses to touch POST/PUT/PATCH or any cross-origin URL.
+manifest.webmanifest   install metadata + icon set (any + maskable)
+icons/icon-maskable.svg  full-bleed variant with the art inside Android's safe zone
+```
 
 ## Architecture
 
@@ -114,10 +138,10 @@ Why chunked: a 90 MB video never needs a single giant GCM call, memory stays fla
 npm test        # or: node tools/run-tests.mjs
 ```
 
-**56 tests, zero dependencies, no network.** The GitHub adapter is exercised against `tests/helpers/mock-github.mjs`, a mock that enforces real semantics — empty repos have no refs, overwriting needs a sha, ref updates must fast-forward, blobs are immutable.
+**81 tests, zero dependencies, no network.** The GitHub adapter is exercised against `tests/helpers/mock-github.mjs`, a mock that enforces real semantics — empty repos have no refs, overwriting needs a sha, ref updates must fast-forward, blobs are immutable. The service worker is *executed* in a sandbox with stubbed `caches`/`fetch` to prove what it refuses to intercept.
 
 ```
-utils (11)    path traversal attempts, duplicate names, sanitisation, base64 at 200 KB,
+utils  (11)   path traversal attempts, duplicate names, sanitisation, base64 at 200 KB,
               retry/backoff incl. server-supplied retryAfter, formatting
 crypto (12)   sizes 0…6 MB around chunk boundaries, no-plaintext-leak, fresh IVs,
               wrong key, single-byte tamper, header tamper, chunk reorder, progress
@@ -125,11 +149,18 @@ github (14)   empty-repo bootstrap, both upload paths (call order verified),
               overwrite recovery, system-folder filtering, delete, move-without-
               re-upload, >100 MB refusal, 401 vs 403 vs 422 handling, rate-limit
               backoff, concurrent-push rebase, URL encoding
-vault (13)    upload/list/search/folders/summary, collision handling, hostile
+vault  (13)   upload/list/search/folders/summary, collision handling, hostile
               filenames, encrypted round-trip with plaintext-absence proof,
               session key reuse, wrong-password lockout, rename semantics, delete,
               share URLs, progress monotonicity, quota
-bundle (6)    regenerates repovault.html from source, then executes it with no DOM:
+lock   (11)   weak-passcode rejection, hash-never-plaintext, unique salts, corrupt
+              record handling, constant-time compare, auto-lock timing/activity/
+              disable, storage round-trip, session flag
+pwa    (14)   manifest install fields + required icon sizes (files must exist),
+              precache list vs. disk (catches silent offline breakage), executed
+              worker: POST never intercepted, GitHub API never intercepted,
+              cache-first assets, network-first navigations with offline fallback
+bundle  (6)   regenerates repovault.html from source, then executes it with no DOM:
               crypto round-trip + full vault workflow through the shipped artifact,
               and asserts a fresh build is byte-identical to the committed one
 ```
@@ -141,12 +172,12 @@ CI runs all of that on Node 18/20/22 plus a "is `repovault.html` stale?" gate.
 ```bash
 git clone https://github.com/cid0980/Vault-for-me.git
 cd repovault
-npm test                       # 56 tests, ~2 seconds
+npm test                       # 81 tests, ~3 seconds
 npm run build                  # refreshes repovault.html
 npm run dev                    # http://localhost:8000
 ```
 
-**GitHub Pages** (recommended — same platform as your storage): push to `main`, then *Settings → Pages → Source: **Deploy from a branch** → branch `main`, folder `/ (root)`*. It goes live at `https://cid0980.github.io/Vault-for-me/` — bookmark that on your phone and your repo is a drive you can reach from anywhere. (Prefer CI-driven deploys? The repo's `test.yml` workflow runs the 56-test suite on every push; pushing workflows needs a token with **Workflows: Read and write**, which is why they are kept out of the first commit.) Want Actions-based deploys instead? Move `docs/actions-pages-workflow.yml` to `.github/workflows/pages.yml` and set Pages → Source: GitHub Actions.
+**GitHub Pages** (recommended — same platform as your storage): push to `main`, then *Settings → Pages → Source: **Deploy from a branch** → branch `main`, folder `/ (root)`*. It goes live at `https://cid0980.github.io/Vault-for-me/` — bookmark that on your phone and your repo is a drive you can reach from anywhere. (Prefer CI-driven deploys? The repo's `test.yml` workflow runs the 81-test suite on every push; pushing workflows needs a token with **Workflows: Read and write**, which is why they are kept out of the first commit.) Want Actions-based deploys instead? Move `docs/actions-pages-workflow.yml` to `.github/workflows/pages.yml` and set Pages → Source: GitHub Actions.
 
 **Netlify / Cloudflare Pages:** drag the folder in (no build command, publish dir `/`); `_headers` adds a strict CSP.
 

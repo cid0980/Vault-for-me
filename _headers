@@ -12,3 +12,12 @@
   Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
+
+# The service worker must never be served stale: browsers check it at most
+# every 24h, but a no-cache header makes updates land on the next load.
+/sw.js
+  Cache-Control: no-cache, must-revalidate
+
+# The manifest is tiny and changes rarely; a short TTL keeps install prompts fresh.
+/manifest.webmanifest
+  Cache-Control: max-age=3600
