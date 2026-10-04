@@ -39,7 +39,10 @@ function binaryResponse(bytes) {
   };
 }
 
-export function createMockGitHub({ owner = 'octo', repo = 'vault', branch = 'main', isPrivate = true, seed = {}, empty = true } = {}) {
+export function createMockGitHub({
+  owner = 'octo', repo = 'vault', branch = 'main', isPrivate = true, seed = {}, empty = true,
+  hasAdmin = true, allowDelete = true, extraBranches = [], tags = [],
+} = {}) {
   const state = {
     files: new Map(),   // path -> { sha, bytes }
     blobs: new Map(),   // sha  -> Uint8Array
@@ -50,6 +53,11 @@ export function createMockGitHub({ owner = 'octo', repo = 'vault', branch = 'mai
     inject: [],         // [(req, state) => {status, body, headers} | undefined]
     apiCalls: 0,
     rateRemaining: '4999',
+    hasAdmin,
+    allowDelete,
+    extraBranches: [...extraBranches],
+    tags: [...tags],
+    exists: true,
   };
 
   function addFile(path, bytes) {
@@ -81,6 +89,16 @@ export function createMockGitHub({ owner = 'octo', repo = 'vault', branch = 'mai
     commitTree(new Map([...state.files].map(([p, f]) => [p, f.sha])), 'seed', []);
   }
 
+  /** Make the "files on disk" match a commit's tree (used whenever a ref moves). */
+  function applyTree(commitSha) {
+    const commit = state.commits.get(commitSha);
+    if (!commit) return;
+    const tree = state.trees.get(commit.tree);
+    if (!tree) return;
+    state.files.clear();
+    for (const [path, blobSha] of tree) state.files.set(path, { sha: blobSha, bytes: state.blobs.get(blobSha) || new Uint8Array() });
+  }
+
   const prefix = `/repos/${owner}/${repo}`;
 
   async function route(method, pathname, search, body, headers) {
@@ -98,7 +116,8 @@ export function createMockGitHub({ owner = 'octo', repo = 'vault', branch = 'mai
       const size = [...state.files.values()].reduce((n, f) => n + f.bytes.length, 0);
       return response(200, {
         full_name: `${owner}/${repo}`, private: isPrivate, default_branch: branch,
-        size: Math.ceil(size / 1024), html_url: `https://github.com/${owner}/${repo}`, permissions: { push: true },
+        size: Math.ceil(size / 1024), html_url: `https://github.com/${owner}/${repo}`,
+        permissions: { push: true, admin: state.hasAdmin },
       });
     }
 
@@ -107,8 +126,54 @@ export function createMockGitHub({ owner = 'octo', repo = 'vault', branch = 'mai
       return response(200, { ref: `refs/heads/${branch}`, object: { sha: state.head } });
     }
 
+    if (method === 'GET' && /^\/repos\/.*\/git\/commits\/[0-9a-f]{6,40}$/.test(pathname)) {
+      const sha = pathname.split('/').pop();
+      const commit = state.commits.get(sha);
+      if (!commit) return response(404, { message: 'Not Found' });
+      return response(200, { sha, message: commit.message, tree: { sha: commit.tree }, parents: (commit.parents || []).map((p) => ({ sha: p })) });
+    }
+
+    if (method === 'GET' && pathname === `${prefix}/commits`) {
+      if (!state.exists || !state.head) return response(409, { message: 'Git Repository is empty.' });
+      const qs = new URLSearchParams(search || '');
+      const perPage = Number(qs.get('per_page') || 30);
+      const page = Number(qs.get('page') || 1);
+      const chain = [];
+      let cursor = state.head;
+      const seen = new Set();
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        const c = state.commits.get(cursor);
+        if (!c) break;
+        chain.push({ sha: cursor, commit: { message: c.message, author: { name: 'test', email: 'test@example.com', date: new Date().toISOString() } } });
+        cursor = c.parents && c.parents[0];
+      }
+      const totalPages = Math.max(1, Math.ceil(chain.length / perPage));
+      const slice = chain.slice((page - 1) * perPage, page * perPage);
+      const headers = {};
+      if (totalPages > 1) {
+        const parts = [];
+        if (page < totalPages) parts.push(`<https://api.github.com/repos/${owner}/${repo}/commits?per_page=${perPage}&page=${page + 1}>; rel="next"`);
+        parts.push(`<https://api.github.com/repos/${owner}/${repo}/commits?per_page=${perPage}&page=${totalPages}>; rel="last"`);
+        headers.Link = parts.join(', ');
+      }
+      return response(200, slice, headers);
+    }
+
+    if (method === 'GET' && pathname === `${prefix}/branches`) {
+      return response(200, [branch, ...state.extraBranches].map((name) => ({ name, commit: { sha: state.head } })));
+    }
+
+    if (method === 'GET' && pathname === `${prefix}/tags`) {
+      return response(200, state.tags.map((name) => ({ name, commit: { sha: state.head } })));
+    }
+
     if (method === 'POST' && pathname === `${prefix}/git/refs`) {
       if (body.ref !== `refs/heads/${branch}`) return response(404, { message: 'Not Found' });
+      if (state.head) return response(422, { message: 'Reference already exists' });
+      if (!state.commits.has(body.sha)) return response(422, { message: 'not a commit' });
+      state.head = body.sha;
+      applyTree(body.sha);
       return response(201, { ref: body.ref, object: { sha: body.sha } });
     }
 
@@ -145,10 +210,13 @@ export function createMockGitHub({ owner = 'octo', repo = 'vault', branch = 'mai
     }
 
     if (method === 'POST' && pathname === `${prefix}/git/commits`) {
-      if (state.head && body.parents?.[0] !== state.head) {
+      // A commit with no parents is a root commit — always allowed (that is how
+      // a rewritten, history-free branch is built).
+      const parents = Array.isArray(body.parents) ? body.parents : [];
+      if (parents.length > 0 && state.head && parents[0] !== state.head) {
         return response(422, { message: 'Update is not a fast forward' });
       }
-      if (body.parents?.[0] && !state.commits.has(body.parents[0])) return response(422, { message: 'parent not found' });
+      if (parents[0] && !state.commits.has(parents[0])) return response(422, { message: 'parent not found' });
       if (!state.trees.has(body.tree)) return response(422, { message: 'tree not found' });
       const commitSha = sha(['commit', body.tree, body.message, (body.parents || []).join(','), state.commits.size]);
       state.commits.set(commitSha, { tree: body.tree, parents: body.parents || [], message: body.message });
@@ -162,13 +230,39 @@ export function createMockGitHub({ owner = 'octo', repo = 'vault', branch = 'mai
     }
 
     if (method === 'PATCH' && pathname.startsWith(`${prefix}/git/refs/heads/`)) {
+      if (!state.head) return response(404, { message: 'Not Found' }); // empty repo has no ref to move
       const commit = state.commits.get(body.sha);
       if (!commit) return response(422, { message: 'reference update: not a commit' });
-      if (state.head && commit.parents[0] !== state.head && !body.force) {
-        return response(422, { message: 'Update is not a fast forward' });
-      }
+      const isFastForward = commit.parents[0] === state.head;
+      if (!isFastForward && !body.force) return response(422, { message: 'Update is not a fast forward' });
       state.head = body.sha;
+      applyTree(body.sha);
       return response(200, { ref: `refs/heads/${branch}`, object: { sha: body.sha } });
+    }
+
+    if (method === 'DELETE' && pathname === prefix) {
+      if (!state.allowDelete) return response(403, { message: 'Must have admin rights to Repository.' });
+      state.exists = false;
+      state.head = null;
+      state.files.clear();
+      state.commits.clear();
+      state.trees.clear();
+      state.blobs.clear();
+      return response(204, null);
+    }
+
+    if (method === 'POST' && pathname === '/user/repos') {
+      state.exists = true;
+      state.head = null;
+      state.files.clear();
+      state.commits.clear();
+      state.trees.clear();
+      state.blobs.clear();
+      state.createdPrivate = !!body.private;
+      return response(201, {
+        name: body.name, full_name: `${owner}/${body.name}`, private: !!body.private,
+        default_branch: branch, html_url: `https://github.com/${owner}/${body.name}`,
+      });
     }
 
     if (pathname.startsWith(`${prefix}/contents/`)) {

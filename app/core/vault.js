@@ -8,6 +8,7 @@
 
 import { LIMITS, joinPath, safeFileName, safeFolder, uniquePath, kindOf, mimeOf, dirName, baseName, extOf, toBytes, fromUtf8, utf8, b64encode, b64decode, codedError, formatBytes } from './util.js';
 import { deriveVaultKey, encryptBytes, decryptBytes, isEncryptedBytes, randomBytes, DEFAULT_ITERATIONS, hasWebCrypto } from './crypto.js';
+import { createZip, exportName } from './zip.js';
 
 export const SALT_PATH = LIMITS.SYSTEM_DIR + 'salt.b64';
 export const ENC_SUFFIX = '.vault';
@@ -249,6 +250,120 @@ export class Vault {
     const updated = this.decorate({ path: to, sha: res && res.commit, size: entry.size, updatedAt: new Date().toISOString() });
     this.entries.push(updated);
     return updated;
+  }
+
+  /* ------------------------------------------------- history & reclamation */
+
+  /** Everything the "reclaim space" UI needs, in one round trip. */
+  async historyInfo() {
+    const adapter = this.adapter;
+    if (!adapter.getCommitCount || !adapter.listRefs) {
+      return { supported: false, commitCount: 0, branches: [], tags: [], branch: '', fileCount: this.entries.filter((e) => !e.system).length };
+    }
+    const [commitCount, refs] = await Promise.all([
+      adapter.getCommitCount().catch(() => 0),
+      adapter.listRefs().catch(() => ({ branches: [], tags: [] })),
+    ]);
+    if (adapter.usage) this.usage = await adapter.usage().catch(() => this.usage);
+    const files = this.entries.filter((e) => !e.system);
+    const logicalBytes = this.entries.reduce((n, e) => n + (e.size || 0), 0);
+    const supported = adapter.id === 'github';
+    return {
+      supported,
+      commitCount,
+      branches: refs.branches,
+      tags: refs.tags,
+      branch: adapter.branch || '',
+      hasAdmin: !!(this.info && this.info.hasAdmin),
+      fileCount: files.length,
+      logicalBytes,
+      reportedBytes: (this.usage && this.usage.reportedBytes) || 0,
+      raw: { commitCount, refs, files },
+    };
+  }
+
+  /**
+   * Fold history into a single commit, in place. Nothing is re-uploaded and no
+   * file changes — but note the caveat: the old objects are only *unreachable*,
+   * not erased, until GitHub garbage-collects them.
+   */
+  async purgeHistory({ message } = {}) {
+    if (!this.adapter.purgeHistory) throw codedError('unsupported', 'This backend has no history to purge.');
+    const before = await this.adapter.getCommitCount().catch(() => 0);
+    const result = await this.adapter.purgeHistory(message ? { message } : {});
+    await this.refresh();
+    const after = await this.adapter.getCommitCount().catch(() => 1);
+    return { ...result, before, after };
+  }
+
+  /**
+   * Guaranteed reclamation: hold every file in memory, delete the repository,
+   * recreate it empty and push everything back as one commit.
+   * Nothing is deleted until every file has downloaded successfully.
+   */
+  async compact({ onProgress = null, isPrivate = true, keepHistoryOnFailure = true } = {}) {
+    const adapter = this.adapter;
+    if (!adapter.deleteRepo || !adapter.createRepo || !adapter.rebuildFromFiles) {
+      throw codedError('unsupported', 'This backend does not support rebuilding.');
+    }
+    const keep = this.entries.filter((e) => !e.system);
+    if (!keep.length) throw codedError('empty', 'There are no files in the vault to rebuild from.');
+
+    const stage = (phase, fraction, detail) => onProgress && onProgress({ phase, fraction, detail });
+
+    // 1. everything into memory first — the repository is untouched until this succeeds
+    const held = [];
+    for (let i = 0; i < keep.length; i++) {
+      const entry = keep[i];
+      stage('download', i / keep.length, `Reading ${entry.displayName}`);
+      const bytes = await adapter.getFileBytes(entry.path);
+      held.push({ path: entry.path, bytes, name: entry.displayName, size: bytes.length });
+    }
+    const totalBytes = held.reduce((n, f) => n + f.size, 0);
+
+    // 2. rebuild from scratch
+    const snapshot = { isPrivate: this.info ? !!this.info.isPrivate : isPrivate, branch: adapter.branch };
+    try {
+      stage('delete', 0, 'Deleting the repository…');
+      await adapter.deleteRepo();
+      stage('create', 0.2, 'Recreating it empty…');
+      await adapter.createRepo({ name: adapter.repo, isPrivate: snapshot.isPrivate });
+      if (adapter.branch) adapter.branch = snapshot.branch || adapter.branch; // keep the same branch name
+      stage('upload', 0.3, `Uploading ${held.length} files…`);
+      const result = await adapter.rebuildFromFiles(held, {
+        branch: snapshot.branch,
+        onProgress: (f) => stage('upload', 0.3 + f * 0.7, `Uploading ${held.length} files…`),
+      });
+      this.info = await adapter.test();
+      await this.refresh();
+      stage('done', 1, 'Rebuilt.');
+      return { ...result, fileCount: held.length, totalBytes, skipped: held.length - result.uploaded };
+    } catch (err) {
+      err.rebuildInterrupted = keepHistoryOnFailure;
+      err.heldFiles = held; // the caller can offer a ZIP export so nothing is lost
+      throw err;
+    }
+  }
+
+  /** Download the whole vault as one ZIP (raw stored bytes — encrypted files stay encrypted). */
+  async exportZip({ onProgress = null, decrypt = false, password = null } = {}) {
+    const files = [];
+    const source = this.entries.filter((e) => !e.system);
+    for (let i = 0; i < source.length; i++) {
+      const entry = source[i];
+      if (onProgress) onProgress({ phase: 'read', fraction: i / source.length, detail: entry.displayName });
+      const bytes = await this.readBytes(entry);
+      if (decrypt && entry.encrypted) {
+        const key = await this.ensureKey(password);
+        const { data, header } = await decryptBytes(bytes, key);
+        files.push({ name: joinPath(entry.folder, header.name || entry.displayName), data });
+      } else {
+        files.push({ name: entry.path, data: bytes });
+      }
+    }
+    if (onProgress) onProgress({ phase: 'zip', fraction: 0.95, detail: 'Building the archive…' });
+    const zip = createZip(files, { onProgress: (f) => onProgress && onProgress({ phase: 'zip', fraction: 0.95 + f * 0.05, detail: 'Building the archive…' }) });
+    return { ...zip, name: exportName(), decrypted: !!decrypt };
   }
 
   /** Shareable URL: public repos get a raw link, private repos only work in-app. */

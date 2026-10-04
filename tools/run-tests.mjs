@@ -12,6 +12,7 @@ const suites = [
   'tests/vault.test.mjs',
   'tests/lock.test.mjs',
   'tests/pwa.test.mjs',
+  'tests/reclaim.test.mjs',
   'tests/bundle.test.mjs',
 ];
 

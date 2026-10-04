@@ -11,6 +11,7 @@ import { LIMITS, formatBytes, timeAgo, kindOf, isTextLike } from '../core/util.j
 import { GitHubAdapter } from '../adapters/github.js';
 import { MemoryAdapter } from '../adapters/memory.js';
 import { Vault } from '../core/vault.js';
+import { matchPhrase, PURGE_PHRASE, REBUILD_PHRASE, summarisePurge, summariseRebuild } from '../core/purge.js';
 import {
   validatePasscode, createPasscode, verifyPasscode, AutoLock,
   readLock, writeLock, clearLock, isSessionUnlocked, markSessionUnlocked, clearSession,
@@ -667,7 +668,7 @@ function wire() {
   window.addEventListener('keydown', (e) => {
     if (!$('lock-screen').hidden) return; // the lock screen owns the keyboard
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-    if (e.key === 'Escape') { closeViewer(); show($('confirm'), false); return; }
+    if (e.key === 'Escape') { closeViewer(); show($('confirm'), false); closeStorage(); return; }
     if (typing) return;
     if (e.key === '/') { e.preventDefault(); $('search').focus(); }
     if (e.key === 'u' && state.vault) { e.preventDefault(); $('file-input').click(); }
@@ -724,7 +725,9 @@ function wire() {
     const yes = await confirmDialog(
       'Delete this file?',
       `<b>${escapeHtml(entry.displayName)}</b> (${formatBytes(entry.size)}) will be removed from the repo's latest commit.
-       Note: git keeps history — the blob stays in the object store, so a <2 GB repo does not shrink. See the README for reclaiming space.`,
+       <br><br>Be clear about what that does and does not do: git keeps every version it has ever stored, so
+       <b>the bytes still occupy space</b> and the old copy is still fetchable by its SHA. To actually reclaim
+       it, open <b>Storage</b> and fold the history — or delete and rebuild the repository.`,
       'Delete',
     );
     if (!yes) return;
@@ -735,6 +738,16 @@ function wire() {
       toast('Deleted from the branch');
     } catch (err) { toast('Delete failed: ' + err.message); }
   });
+
+  // ---- storage & history
+  $('storage-btn').addEventListener('click', openStorage);
+  $('storage-close').addEventListener('click', closeStorage);
+  $('storage-modal').addEventListener('click', (e) => { if (e.target === $('storage-modal')) closeStorage(); });
+  $('purge-confirm').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('purge-btn').click(); });
+  $('rebuild-confirm').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rebuild-btn').click(); });
+  $('purge-btn').addEventListener('click', runPurge);
+  $('rebuild-btn').addEventListener('click', runRebuild);
+  $('export-btn').addEventListener('click', () => runExport({}));
 
   // ---- tray
   $('tray-close').addEventListener('click', () => showTray(false));
@@ -1061,4 +1074,152 @@ export function mount() {
 if (typeof document !== 'undefined' && document.getElementById && document.getElementById('setup-screen')) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
+}
+
+/* --------------------------------------------------- storage, history, reclaim */
+
+function closeStorage() { show($('storage-modal'), false); }
+
+function storageProgress(text) { $('storage-progress').textContent = text || ''; }
+
+async function openStorage() {
+  if (!state.vault) return toast('Connect a repository first');
+  show($('storage-modal'), true);
+  storageProgress('Reading the repository…');
+  alertBox($('storage-warnings'), null, '');
+  alertBox($('storage-notes'), null, '');
+  try {
+    const info = await state.vault.historyInfo();
+    const stats = [
+      ['Files', String(info.fileCount)],
+      ['Your files', formatBytes(info.logicalBytes)],
+      ...(info.reportedBytes ? [['GitHub says', formatBytes(info.reportedBytes)]] : []),
+      ['Commits', String(info.commitCount)],
+      ['Branches', String(Math.max(1, info.branches.length))],
+      ['Tags', String(info.tags.length)],
+    ];
+    $('storage-stats').innerHTML = stats
+      .map(([k, v]) => `<span class="chip"><b>${escapeHtml(v)}</b>&nbsp;${escapeHtml(k)}</span>`)
+      .join('');
+
+    const notes = [];
+    if (info.commitCount <= 1) {
+      notes.push('This repository has a single commit, so folding the history would free nothing. Adding, replacing and deleting files always adds commits — that is where reclaimable space comes from.');
+    } else {
+      notes.push(`${info.commitCount} commits hold ${info.fileCount} live file${info.fileCount === 1 ? '' : 's'}. Every earlier version of those files — and every file you have deleted — is still stored inside them.`);
+    }
+    alertBox($('storage-notes'), 'info', notes.join(' '));
+
+    const warnings = [];
+    const others = (info.branches || []).filter((b) => b !== info.branch);
+    if (others.length) warnings.push(`Other branches (${others.map((b) => escapeHtml(b)).join(', ')}) keep their own commits alive: folding ${escapeHtml(info.branch)} will not free them. Delete those branches too if you want one clean history.`);
+    if ((info.tags || []).length) warnings.push(`${info.tags.length} tag${info.tags.length === 1 ? '' : 's'} also hold commits reachable — tags point straight at old objects.`);
+    if (!info.hasAdmin) warnings.push('This token has no <b>Administration</b> permission, so the delete-and-rebuild path below is unavailable. Add "Administration: Read and write" to the token (fine-grained) or use a classic token with <code>delete_repo</code>, then reconnect.');
+    alertBox($('storage-warnings'), 'warn', warnings.join('<br>'));
+
+    const canRebuild = info.hasAdmin && state.vault.adapter && state.vault.adapter.id === 'github';
+    $('rebuild-btn').disabled = !canRebuild;
+    $('rebuild-confirm').disabled = !canRebuild;
+    $('purge-btn').disabled = !info.supported || info.commitCount <= 1;
+    storageProgress('');
+  } catch (err) {
+    storageProgress('');
+    alertBox($('storage-warnings'), 'warn', 'Could not read the repository: ' + escapeHtml(err.message));
+  }
+}
+
+async function runPurge() {
+  if (!matchPhrase($('purge-confirm').value, PURGE_PHRASE)) return toast(`Type ${PURGE_PHRASE} exactly to confirm`);
+  const info = await state.vault.historyInfo().catch(() => null);
+  if (info && info.commitCount <= 1) return toast('Nothing to fold — there is only one commit');
+  $('purge-btn').disabled = true;
+  storageProgress('Folding history…');
+  try {
+    const result = await state.vault.purgeHistory();
+    render();
+    const summary = summarisePurge({ before: { commitCount: result.before } });
+    $('purge-confirm').value = '';
+    toast(summary.headline);
+    await openStorage();
+    storageProgress(`${result.before} commits folded into 1. The files are untouched; the old commits are unreachable and will be freed by GitHub's garbage collection, not necessarily immediately.`);
+  } catch (err) {
+    storageProgress('');
+    alertBox($('storage-warnings'), 'warn', 'Fold failed: ' + escapeHtml(err.message));
+  } finally {
+    $('purge-btn').disabled = false;
+  }
+}
+
+async function runExport({ decrypt = false } = {}) {
+  if (!state.vault) return;
+  $('export-btn').disabled = true;
+  try {
+    const { blob, name, count, skipped, decrypted } = await state.vault.exportZip({
+      decrypt,
+      password: decrypt ? state.password : null,
+      onProgress: ({ phase, fraction, detail }) => {
+        const pct = Number.isFinite(fraction) ? ` ${Math.round(fraction * 100)}%` : '';
+        storageProgress(`${phase === 'zip' ? 'Packing the ZIP' : 'Fetching files'}${pct}${detail ? ' — ' + detail : ''}`);
+      },
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    $('export-note').textContent = `${count} files · ${formatBytes(blob.size)}${skipped.length ? ` · ${skipped.length} skipped` : ''}${decrypted ? ' · decrypted' : ''}`;
+    storageProgress('');
+    toast(`Exported ${count} files as ${name}`);
+  } catch (err) {
+    storageProgress('');
+    alertBox($('storage-warnings'), 'warn', 'Export failed: ' + escapeHtml(err.message));
+  } finally {
+    $('export-btn').disabled = false;
+  }
+}
+
+async function runRebuild() {
+  if (!matchPhrase($('rebuild-confirm').value, REBUILD_PHRASE)) return toast(`Type ${REBUILD_PHRASE} exactly to confirm`);
+
+  const yes = await confirmDialog(
+    'Delete and rebuild the repository?',
+    `The repository <b>${escapeHtml(state.vault.info.repo)}</b> is deleted from GitHub and immediately created again, empty, with a single commit holding your current files.
+     <br><br>This is irreversible and it is the only way to reclaim space <b>immediately</b>. Anything not in the current vault — other branches, tags, old commits — is gone for good.
+     <br><br>Your files are read into this tab <b>before</b> the delete, and you get a ZIP if the re-upload fails.`,
+    'Delete & rebuild',
+  );
+  if (!yes) return;
+
+  $('rebuild-btn').disabled = true;
+  try {
+    const result = await state.vault.compact({
+      isPrivate: state.vault.info.isPrivate !== false,
+      onProgress: ({ phase, fraction, detail }) => {
+        const label = {
+          download: 'Reading files into this tab', delete: 'Deleting the repository',
+          create: 'Recreating it empty', upload: 'Re-uploading', done: 'Finishing',
+        }[phase] || phase;
+        const pct = Number.isFinite(fraction) ? ` ${Math.round(fraction * 100)}%` : '';
+        storageProgress(`${label}${pct}${detail ? ' — ' + detail : ''}`);
+      },
+    });
+    render();
+    const summary = summariseRebuild({ fileCount: result.uploaded, totalBytes: state.entries.reduce((n, e) => n + (e.size || 0), 0) });
+    toast(summary.headline);
+    $('rebuild-confirm').value = '';
+    await openStorage();
+    storageProgress(`${summary.headline}. ${summary.detail}`);
+  } catch (err) {
+    storageProgress('');
+    const held = err.heldFiles || [];
+    const html = escapeHtml(err.message) + (err.rebuildInterrupted
+      ? `<br><br><b>You are in the middle of a rebuild and the files are held in this tab (${held.length}).</b> Download them as a ZIP now.`
+      : '');
+    alertBox($('storage-warnings'), 'warn', html);
+    if (err.rebuildInterrupted && held.length) {
+      await runExport({}).catch(() => {});
+    }
+  } finally {
+    $('rebuild-btn').disabled = false;
+  }
 }

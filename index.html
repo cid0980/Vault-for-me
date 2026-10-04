@@ -415,6 +415,7 @@
           Upload
         </button>
         <button class="btn ghost sm" id="upload-folder-btn" title="Upload an entire folder">Folder</button>
+        <button class="btn ghost sm" id="storage-btn" title="Storage, history and reclaiming space">Storage</button>
         <button class="btn ghost sm" id="refresh-btn" title="Re-read the repo">Refresh</button>
         <button class="filt" id="encrypt-toggle" aria-pressed="false" title="Encrypt files in this browser before they are uploaded">🔒 Encrypt uploads</button>
         <button class="btn ghost sm" id="lock-btn" hidden title="Forget the vault password held in memory">Lock vault</button>
@@ -490,6 +491,71 @@
       <button class="btn ghost" id="viewer-rename">Rename</button>
       <button class="btn danger" id="viewer-delete">Delete</button>
     </div>
+  </div>
+</div>
+
+<!-- storage: space, history, reclaim -->
+<div class="modal" id="storage-modal" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <div>
+        <h3>Storage &amp; history</h3>
+        <div class="meta-chips" id="storage-stats"></div>
+      </div>
+      <button class="x" id="storage-close" title="Close (Esc)">×</button>
+    </div>
+
+    <div class="alert info" id="storage-notes" hidden></div>
+    <div class="alert warn" id="storage-warnings" hidden></div>
+
+    <div class="steps" style="grid-template-columns:1fr;gap:10px;margin-top:14px">
+      <div class="step">
+        <em>FAST · 2 API CALLS · NOTHING RE-UPLOADED</em>
+        <b>1 · Fold history into one commit</b>
+        <span>
+          Every file stays exactly as it is; the chain of commits is replaced by a single one.
+          The old commits become <b>unreachable</b> — GitHub frees that space when it runs garbage collection,
+          and until then the old blobs can still be fetched by SHA. Use this for routine tidying.
+        </span>
+        <div class="field-inline">
+          <input id="purge-confirm" type="text" placeholder="Type PURGE to confirm" autocomplete="off" spellcheck="false" />
+          <button class="btn sm" id="purge-btn">Fold history</button>
+        </div>
+      </div>
+
+      <div class="step">
+        <em>SAFE · KEEP A COPY</em>
+        <b>2 · Export the vault as a ZIP</b>
+        <span>Every file exactly as stored (encrypted files stay encrypted). Do this before the rebuild below, or any time you want a local backup. Verified with a real ZIP reader in the test suite.</span>
+        <div class="field-inline">
+          <button class="btn ghost sm" id="export-btn">Download ZIP</button>
+          <span class="note" id="export-note" style="margin:0"></span>
+        </div>
+      </div>
+
+      <div class="step" id="rebuild-step">
+        <em>GUARANTEED · NEEDS AN ADMIN TOKEN</em>
+        <b>3 · Delete &amp; rebuild the repository</b>
+        <span>
+          Reads every file into this tab <b>first</b>, then deletes the repository and recreates it empty with a
+          single commit. This is the only way to reclaim space <b>instantly and for certain</b>: the old objects are
+          not merely unreachable, they no longer exist. If the upload fails half-way you can restore from the ZIP
+          above — the files are held in memory and offered to you as a download.
+        </span>
+        <div class="field-inline">
+          <input id="rebuild-confirm" type="text" placeholder="Type REBUILD to confirm" autocomplete="off" spellcheck="false" />
+          <button class="btn danger sm" id="rebuild-btn">Delete &amp; rebuild</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="note" id="storage-progress"></p>
+    <p class="note">
+      <b>Why "unreachable" is not "deleted":</b> git keeps every object it has ever stored. A force-push removes the
+      <i>reference</i>, not the object — GitHub's own guide to removing sensitive data says to contact Support to
+      expunge them, and until then an old blob can still be fetched by anyone who knows its SHA. Deleting and
+      recreating the repository is the only instant, guaranteed reclaim.
+    </p>
   </div>
 </div>
 

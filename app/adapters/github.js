@@ -23,6 +23,7 @@
  */
 
 import { LIMITS, b64encode, encodePath, joinPath, normalizePath, utf8, codedError, withRetry } from '../core/util.js';
+import { commitCountFromLink } from '../core/purge.js';
 
 const API_VERSION = '2022-11-28'; // pinned so a GitHub default change can't break us
 
@@ -198,6 +199,7 @@ export class GitHubAdapter {
       sizeKB: data.size || 0,
       htmlUrl: data.html_url,
       canPush: !data.permissions || data.permissions.push !== false,
+      hasAdmin: !!(data.permissions && data.permissions.admin),
       empty: (data.size || 0) === 0,
     };
     return this._repoCache;
@@ -231,7 +233,157 @@ export class GitHubAdapter {
 
   async usage() {
     const repo = await this.getRepo({ fresh: true });
-    return { usedBytes: repo.sizeKB * 1024, softLimitBytes: LIMITS.REPO_SOFT_LIMIT, hardGuidanceBytes: LIMITS.REPO_HARD_GUIDANCE };
+    // GitHub's `size` field is in KB and updates lazily (it can sit at 0 for a
+    // while after a push), so the number users care about — the bytes actually
+    // held by files — is computed from the tree. The reported figure is kept
+    // alongside it, since the gap is roughly what history is costing you.
+    let logicalBytes = 0;
+    let fileCount = 0;
+    try {
+      const { files } = await this.listFiles({ includeSystem: true });
+      logicalBytes = files.reduce((n, f) => n + (f.size || 0), 0);
+      fileCount = files.length;
+    } catch { /* an empty or just-created repo has no tree yet */ }
+    return {
+      usedBytes: logicalBytes,
+      fileCount,
+      reportedBytes: repo.sizeKB * 1024,
+      softLimitBytes: LIMITS.REPO_SOFT_LIMIT,
+      hardGuidanceBytes: LIMITS.REPO_HARD_GUIDANCE,
+    };
+  }
+
+  /* ------------------------------------------------- history & reclamation */
+
+  /** Total commits reachable from the branch (GitHub paginates via Link headers). */
+  async getCommitCount({ branch = null } = {}) {
+    const ref = branch || this.branch || (await this.getRepo()).defaultBranch;
+    const res = await this._raw(`/repos/${this.owner}/${this.repo}/commits?per_page=1&sha=${encodeURIComponent(ref)}`);
+    if (res.status === 409) return 0; // empty repository
+    if (!res.ok) throw this._fail(res);
+    let body = [];
+    try { body = JSON.parse(res.text || '[]'); } catch { body = []; }
+    if (body && body.message === 'Git Repository is empty.') return 0;
+    return commitCountFromLink(res.headers.get('link'), { perPage: 1, bodyLength: Array.isArray(body) ? body.length : 0 });
+  }
+
+  /** Branches and tags: refs that keep "deleted" objects alive and countable. */
+  async listRefs() {
+    const [branches, tags] = await Promise.all([
+      this._json(`/repos/${this.owner}/${this.repo}/branches?per_page=100`).catch(() => []),
+      this._json(`/repos/${this.owner}/${this.repo}/tags?per_page=100`).catch(() => []),
+    ]);
+    return {
+      branches: (branches || []).map((b) => b && b.name).filter(Boolean),
+      tags: (tags || []).map((t) => t && t.name).filter(Boolean),
+    };
+  }
+
+  /** A commit with no parents — how a history-free branch is built. */
+  async createOrphanCommit({ tree, message, author = null, committer = null }) {
+    const body = { message, tree, parents: [] };
+    if (author) body.author = author;
+    if (committer) body.committer = committer;
+    return withRetry(() => this._json(`/repos/${this.owner}/${this.repo}/git/commits`, { method: 'POST', body }));
+  }
+
+  /** Move (or create) the branch ref. `force` is what makes old history unreachable. */
+  async setRef(sha, { force = true, branch = null } = {}) {
+    const name = branch || this.branch;
+    // GitHub's route is /git/refs/heads/<branch>: the first slash is part of the
+    // path, only slashes inside the branch name itself are encoded.
+    const path = `heads/${encodeURIComponent(name)}`;
+    try {
+      const res = await this._json(`/repos/${this.owner}/${this.repo}/git/refs/${path}`, {
+        method: 'PATCH',
+        body: { sha, force },
+      });
+      this._headCache = { sha, branch: name };
+      return res;
+    } catch (err) {
+      if (err.code !== 'not-found' && err.code !== 'conflict') throw err;
+      const created = await this._json(`/repos/${this.owner}/${this.repo}/git/refs`, {
+        method: 'POST',
+        body: { ref: `refs/heads/${name}`, sha },
+      });
+      this._headCache = { sha, branch: name };
+      return created;
+    }
+  }
+
+  /**
+   * Fold history into a single root commit holding the exact current tree.
+   * Two API calls, nothing re-uploaded — but read the docs: this makes the old
+   * objects *unreachable*, it does not erase them. GitHub reclaims the space
+   * when it runs garbage collection.
+   */
+  async purgeHistory({ message = 'chore(repovault): fold history — current files as a single commit' } = {}) {
+    const head = await this.getHead({ fresh: true });
+    const commit = await this._json(`/repos/${this.owner}/${this.repo}/git/commits/${head.sha}`);
+    if (!commit || !commit.tree) throw codedError('malformed', 'Could not read the current commit.');
+    const orphan = await this.createOrphanCommit({ tree: commit.tree.sha, message });
+    await this.setRef(orphan.sha, { force: true });
+    return { oldHead: head.sha, newCommit: orphan.sha, tree: commit.tree.sha, branch: this.branch };
+  }
+
+  /** Delete the repository outright. Needs a token with admin rights on it. */
+  async deleteRepo() {
+    const res = await this._raw(`/repos/${this.owner}/${this.repo}`, { method: 'DELETE' });
+    if (res.status === 204 || res.status === 200) {
+      this._headCache = null;
+      this._repoCache = null;
+      return { deleted: true, fullName: `${this.owner}/${this.repo}` };
+    }
+    const err = this._fail(res);
+    if (err.status === 403) {
+      throw codedError('forbidden', 'This token cannot delete repositories. Give it "Administration: Read and write", or delete the repo in GitHub settings and reconnect.', { status: 403 });
+    }
+    throw err;
+  }
+
+  /** Create an empty repository for the authenticated user. */
+  async createRepo({ name = this.repo, isPrivate = true, description = 'RepoVault storage' } = {}) {
+    const data = await this._json(`${this.apiBase}/user/repos`, {
+      method: 'POST',
+      body: { name, private: !!isPrivate, description, auto_init: false, has_issues: false, has_wiki: false, has_projects: false },
+    });
+    this.repo = data.name || name;
+    this.branch = data.default_branch || this.branch || 'main';
+    this._headCache = null;
+    this._repoCache = null;
+    return { name: this.repo, isPrivate: !!data.private, defaultBranch: this.branch, fullName: data.full_name };
+  }
+
+  /**
+   * Rebuild the repo from bytes we already hold: one blob per file, a single
+   * root tree, one root commit, one ref. Used after delete+recreate, so the
+   * result is a genuinely history-free repository.
+   */
+  async rebuildFromFiles(files, { message = 'chore(repovault): rebuild vault from current files', onProgress = null, branch = null } = {}) {
+    if (!files || !files.length) throw codedError('empty', 'No files to rebuild from.');
+    const entries = [];
+    const failures = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
+      try {
+        const blob = await withRetry(() => this._json(`/repos/${this.owner}/${this.repo}/git/blobs`, {
+          method: 'POST',
+          body: { content: b64encode(bytes), encoding: 'base64' },
+        }));
+        entries.push({ path: normalizePath(file.path), mode: '100644', type: 'blob', sha: blob.sha });
+      } catch (err) {
+        failures.push({ path: file.path, error: err.message });
+      }
+      if (onProgress) onProgress((i + 1) / files.length);
+    }
+    if (!entries.length) {
+      throw codedError('rebuild-failed', `No file could be uploaded (${failures.length} failed). The repository is left empty — retry, or restore from your ZIP export.`);
+    }
+    const tree = await this._json(`/repos/${this.owner}/${this.repo}/git/trees`, { method: 'POST', body: { tree: entries } });
+    const commit = await this.createOrphanCommit({ tree: tree.sha, message });
+    await this.setRef(commit.sha, { force: true, branch });
+    return { commit: commit.sha, tree: tree.sha, uploaded: entries.length, failed: failures };
   }
 
   publicUrl(path) {

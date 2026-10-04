@@ -415,6 +415,7 @@
           Upload
         </button>
         <button class="btn ghost sm" id="upload-folder-btn" title="Upload an entire folder">Folder</button>
+        <button class="btn ghost sm" id="storage-btn" title="Storage, history and reclaiming space">Storage</button>
         <button class="btn ghost sm" id="refresh-btn" title="Re-read the repo">Refresh</button>
         <button class="filt" id="encrypt-toggle" aria-pressed="false" title="Encrypt files in this browser before they are uploaded">🔒 Encrypt uploads</button>
         <button class="btn ghost sm" id="lock-btn" hidden title="Forget the vault password held in memory">Lock vault</button>
@@ -490,6 +491,71 @@
       <button class="btn ghost" id="viewer-rename">Rename</button>
       <button class="btn danger" id="viewer-delete">Delete</button>
     </div>
+  </div>
+</div>
+
+<!-- storage: space, history, reclaim -->
+<div class="modal" id="storage-modal" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <div>
+        <h3>Storage &amp; history</h3>
+        <div class="meta-chips" id="storage-stats"></div>
+      </div>
+      <button class="x" id="storage-close" title="Close (Esc)">×</button>
+    </div>
+
+    <div class="alert info" id="storage-notes" hidden></div>
+    <div class="alert warn" id="storage-warnings" hidden></div>
+
+    <div class="steps" style="grid-template-columns:1fr;gap:10px;margin-top:14px">
+      <div class="step">
+        <em>FAST · 2 API CALLS · NOTHING RE-UPLOADED</em>
+        <b>1 · Fold history into one commit</b>
+        <span>
+          Every file stays exactly as it is; the chain of commits is replaced by a single one.
+          The old commits become <b>unreachable</b> — GitHub frees that space when it runs garbage collection,
+          and until then the old blobs can still be fetched by SHA. Use this for routine tidying.
+        </span>
+        <div class="field-inline">
+          <input id="purge-confirm" type="text" placeholder="Type PURGE to confirm" autocomplete="off" spellcheck="false" />
+          <button class="btn sm" id="purge-btn">Fold history</button>
+        </div>
+      </div>
+
+      <div class="step">
+        <em>SAFE · KEEP A COPY</em>
+        <b>2 · Export the vault as a ZIP</b>
+        <span>Every file exactly as stored (encrypted files stay encrypted). Do this before the rebuild below, or any time you want a local backup. Verified with a real ZIP reader in the test suite.</span>
+        <div class="field-inline">
+          <button class="btn ghost sm" id="export-btn">Download ZIP</button>
+          <span class="note" id="export-note" style="margin:0"></span>
+        </div>
+      </div>
+
+      <div class="step" id="rebuild-step">
+        <em>GUARANTEED · NEEDS AN ADMIN TOKEN</em>
+        <b>3 · Delete &amp; rebuild the repository</b>
+        <span>
+          Reads every file into this tab <b>first</b>, then deletes the repository and recreates it empty with a
+          single commit. This is the only way to reclaim space <b>instantly and for certain</b>: the old objects are
+          not merely unreachable, they no longer exist. If the upload fails half-way you can restore from the ZIP
+          above — the files are held in memory and offered to you as a download.
+        </span>
+        <div class="field-inline">
+          <input id="rebuild-confirm" type="text" placeholder="Type REBUILD to confirm" autocomplete="off" spellcheck="false" />
+          <button class="btn danger sm" id="rebuild-btn">Delete &amp; rebuild</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="note" id="storage-progress"></p>
+    <p class="note">
+      <b>Why "unreachable" is not "deleted":</b> git keeps every object it has ever stored. A force-push removes the
+      <i>reference</i>, not the object — GitHub's own guide to removing sensitive data says to contact Support to
+      expunge them, and until then an old blob can still be fetched by anyone who knows its SHA. Deleting and
+      recreating the repository is the only instant, guaranteed reclaim.
+    </p>
   </div>
 </div>
 
@@ -983,6 +1049,7 @@ function peekHeader(bytes) {
 
 
 
+
 const API_VERSION = '2022-11-28'; // pinned so a GitHub default change can't break us
 
 class GitHubError extends Error {
@@ -1157,6 +1224,7 @@ class GitHubAdapter {
       sizeKB: data.size || 0,
       htmlUrl: data.html_url,
       canPush: !data.permissions || data.permissions.push !== false,
+      hasAdmin: !!(data.permissions && data.permissions.admin),
       empty: (data.size || 0) === 0,
     };
     return this._repoCache;
@@ -1190,7 +1258,157 @@ class GitHubAdapter {
 
   async usage() {
     const repo = await this.getRepo({ fresh: true });
-    return { usedBytes: repo.sizeKB * 1024, softLimitBytes: LIMITS.REPO_SOFT_LIMIT, hardGuidanceBytes: LIMITS.REPO_HARD_GUIDANCE };
+    // GitHub's `size` field is in KB and updates lazily (it can sit at 0 for a
+    // while after a push), so the number users care about — the bytes actually
+    // held by files — is computed from the tree. The reported figure is kept
+    // alongside it, since the gap is roughly what history is costing you.
+    let logicalBytes = 0;
+    let fileCount = 0;
+    try {
+      const { files } = await this.listFiles({ includeSystem: true });
+      logicalBytes = files.reduce((n, f) => n + (f.size || 0), 0);
+      fileCount = files.length;
+    } catch { /* an empty or just-created repo has no tree yet */ }
+    return {
+      usedBytes: logicalBytes,
+      fileCount,
+      reportedBytes: repo.sizeKB * 1024,
+      softLimitBytes: LIMITS.REPO_SOFT_LIMIT,
+      hardGuidanceBytes: LIMITS.REPO_HARD_GUIDANCE,
+    };
+  }
+
+  /* ------------------------------------------------- history & reclamation */
+
+  /** Total commits reachable from the branch (GitHub paginates via Link headers). */
+  async getCommitCount({ branch = null } = {}) {
+    const ref = branch || this.branch || (await this.getRepo()).defaultBranch;
+    const res = await this._raw(`/repos/${this.owner}/${this.repo}/commits?per_page=1&sha=${encodeURIComponent(ref)}`);
+    if (res.status === 409) return 0; // empty repository
+    if (!res.ok) throw this._fail(res);
+    let body = [];
+    try { body = JSON.parse(res.text || '[]'); } catch { body = []; }
+    if (body && body.message === 'Git Repository is empty.') return 0;
+    return commitCountFromLink(res.headers.get('link'), { perPage: 1, bodyLength: Array.isArray(body) ? body.length : 0 });
+  }
+
+  /** Branches and tags: refs that keep "deleted" objects alive and countable. */
+  async listRefs() {
+    const [branches, tags] = await Promise.all([
+      this._json(`/repos/${this.owner}/${this.repo}/branches?per_page=100`).catch(() => []),
+      this._json(`/repos/${this.owner}/${this.repo}/tags?per_page=100`).catch(() => []),
+    ]);
+    return {
+      branches: (branches || []).map((b) => b && b.name).filter(Boolean),
+      tags: (tags || []).map((t) => t && t.name).filter(Boolean),
+    };
+  }
+
+  /** A commit with no parents — how a history-free branch is built. */
+  async createOrphanCommit({ tree, message, author = null, committer = null }) {
+    const body = { message, tree, parents: [] };
+    if (author) body.author = author;
+    if (committer) body.committer = committer;
+    return withRetry(() => this._json(`/repos/${this.owner}/${this.repo}/git/commits`, { method: 'POST', body }));
+  }
+
+  /** Move (or create) the branch ref. `force` is what makes old history unreachable. */
+  async setRef(sha, { force = true, branch = null } = {}) {
+    const name = branch || this.branch;
+    // GitHub's route is /git/refs/heads/<branch>: the first slash is part of the
+    // path, only slashes inside the branch name itself are encoded.
+    const path = `heads/${encodeURIComponent(name)}`;
+    try {
+      const res = await this._json(`/repos/${this.owner}/${this.repo}/git/refs/${path}`, {
+        method: 'PATCH',
+        body: { sha, force },
+      });
+      this._headCache = { sha, branch: name };
+      return res;
+    } catch (err) {
+      if (err.code !== 'not-found' && err.code !== 'conflict') throw err;
+      const created = await this._json(`/repos/${this.owner}/${this.repo}/git/refs`, {
+        method: 'POST',
+        body: { ref: `refs/heads/${name}`, sha },
+      });
+      this._headCache = { sha, branch: name };
+      return created;
+    }
+  }
+
+  /**
+   * Fold history into a single root commit holding the exact current tree.
+   * Two API calls, nothing re-uploaded — but read the docs: this makes the old
+   * objects *unreachable*, it does not erase them. GitHub reclaims the space
+   * when it runs garbage collection.
+   */
+  async purgeHistory({ message = 'chore(repovault): fold history — current files as a single commit' } = {}) {
+    const head = await this.getHead({ fresh: true });
+    const commit = await this._json(`/repos/${this.owner}/${this.repo}/git/commits/${head.sha}`);
+    if (!commit || !commit.tree) throw codedError('malformed', 'Could not read the current commit.');
+    const orphan = await this.createOrphanCommit({ tree: commit.tree.sha, message });
+    await this.setRef(orphan.sha, { force: true });
+    return { oldHead: head.sha, newCommit: orphan.sha, tree: commit.tree.sha, branch: this.branch };
+  }
+
+  /** Delete the repository outright. Needs a token with admin rights on it. */
+  async deleteRepo() {
+    const res = await this._raw(`/repos/${this.owner}/${this.repo}`, { method: 'DELETE' });
+    if (res.status === 204 || res.status === 200) {
+      this._headCache = null;
+      this._repoCache = null;
+      return { deleted: true, fullName: `${this.owner}/${this.repo}` };
+    }
+    const err = this._fail(res);
+    if (err.status === 403) {
+      throw codedError('forbidden', 'This token cannot delete repositories. Give it "Administration: Read and write", or delete the repo in GitHub settings and reconnect.', { status: 403 });
+    }
+    throw err;
+  }
+
+  /** Create an empty repository for the authenticated user. */
+  async createRepo({ name = this.repo, isPrivate = true, description = 'RepoVault storage' } = {}) {
+    const data = await this._json(`${this.apiBase}/user/repos`, {
+      method: 'POST',
+      body: { name, private: !!isPrivate, description, auto_init: false, has_issues: false, has_wiki: false, has_projects: false },
+    });
+    this.repo = data.name || name;
+    this.branch = data.default_branch || this.branch || 'main';
+    this._headCache = null;
+    this._repoCache = null;
+    return { name: this.repo, isPrivate: !!data.private, defaultBranch: this.branch, fullName: data.full_name };
+  }
+
+  /**
+   * Rebuild the repo from bytes we already hold: one blob per file, a single
+   * root tree, one root commit, one ref. Used after delete+recreate, so the
+   * result is a genuinely history-free repository.
+   */
+  async rebuildFromFiles(files, { message = 'chore(repovault): rebuild vault from current files', onProgress = null, branch = null } = {}) {
+    if (!files || !files.length) throw codedError('empty', 'No files to rebuild from.');
+    const entries = [];
+    const failures = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
+      try {
+        const blob = await withRetry(() => this._json(`/repos/${this.owner}/${this.repo}/git/blobs`, {
+          method: 'POST',
+          body: { content: b64encode(bytes), encoding: 'base64' },
+        }));
+        entries.push({ path: normalizePath(file.path), mode: '100644', type: 'blob', sha: blob.sha });
+      } catch (err) {
+        failures.push({ path: file.path, error: err.message });
+      }
+      if (onProgress) onProgress((i + 1) / files.length);
+    }
+    if (!entries.length) {
+      throw codedError('rebuild-failed', `No file could be uploaded (${failures.length} failed). The repository is left empty — retry, or restore from your ZIP export.`);
+    }
+    const tree = await this._json(`/repos/${this.owner}/${this.repo}/git/trees`, { method: 'POST', body: { tree: entries } });
+    const commit = await this.createOrphanCommit({ tree: tree.sha, message });
+    await this.setRef(commit.sha, { force: true, branch });
+    return { commit: commit.sha, tree: tree.sha, uploaded: entries.length, failed: failures };
   }
 
   publicUrl(path) {
@@ -1552,6 +1770,7 @@ class MemoryAdapter {
 
 
 
+
 const SALT_PATH = LIMITS.SYSTEM_DIR + 'salt.b64';
 const ENC_SUFFIX = '.vault';
 const SALT_BYTES = 32;
@@ -1794,6 +2013,120 @@ class Vault {
     return updated;
   }
 
+  /* ------------------------------------------------- history & reclamation */
+
+  /** Everything the "reclaim space" UI needs, in one round trip. */
+  async historyInfo() {
+    const adapter = this.adapter;
+    if (!adapter.getCommitCount || !adapter.listRefs) {
+      return { supported: false, commitCount: 0, branches: [], tags: [], branch: '', fileCount: this.entries.filter((e) => !e.system).length };
+    }
+    const [commitCount, refs] = await Promise.all([
+      adapter.getCommitCount().catch(() => 0),
+      adapter.listRefs().catch(() => ({ branches: [], tags: [] })),
+    ]);
+    if (adapter.usage) this.usage = await adapter.usage().catch(() => this.usage);
+    const files = this.entries.filter((e) => !e.system);
+    const logicalBytes = this.entries.reduce((n, e) => n + (e.size || 0), 0);
+    const supported = adapter.id === 'github';
+    return {
+      supported,
+      commitCount,
+      branches: refs.branches,
+      tags: refs.tags,
+      branch: adapter.branch || '',
+      hasAdmin: !!(this.info && this.info.hasAdmin),
+      fileCount: files.length,
+      logicalBytes,
+      reportedBytes: (this.usage && this.usage.reportedBytes) || 0,
+      raw: { commitCount, refs, files },
+    };
+  }
+
+  /**
+   * Fold history into a single commit, in place. Nothing is re-uploaded and no
+   * file changes — but note the caveat: the old objects are only *unreachable*,
+   * not erased, until GitHub garbage-collects them.
+   */
+  async purgeHistory({ message } = {}) {
+    if (!this.adapter.purgeHistory) throw codedError('unsupported', 'This backend has no history to purge.');
+    const before = await this.adapter.getCommitCount().catch(() => 0);
+    const result = await this.adapter.purgeHistory(message ? { message } : {});
+    await this.refresh();
+    const after = await this.adapter.getCommitCount().catch(() => 1);
+    return { ...result, before, after };
+  }
+
+  /**
+   * Guaranteed reclamation: hold every file in memory, delete the repository,
+   * recreate it empty and push everything back as one commit.
+   * Nothing is deleted until every file has downloaded successfully.
+   */
+  async compact({ onProgress = null, isPrivate = true, keepHistoryOnFailure = true } = {}) {
+    const adapter = this.adapter;
+    if (!adapter.deleteRepo || !adapter.createRepo || !adapter.rebuildFromFiles) {
+      throw codedError('unsupported', 'This backend does not support rebuilding.');
+    }
+    const keep = this.entries.filter((e) => !e.system);
+    if (!keep.length) throw codedError('empty', 'There are no files in the vault to rebuild from.');
+
+    const stage = (phase, fraction, detail) => onProgress && onProgress({ phase, fraction, detail });
+
+    // 1. everything into memory first — the repository is untouched until this succeeds
+    const held = [];
+    for (let i = 0; i < keep.length; i++) {
+      const entry = keep[i];
+      stage('download', i / keep.length, `Reading ${entry.displayName}`);
+      const bytes = await adapter.getFileBytes(entry.path);
+      held.push({ path: entry.path, bytes, name: entry.displayName, size: bytes.length });
+    }
+    const totalBytes = held.reduce((n, f) => n + f.size, 0);
+
+    // 2. rebuild from scratch
+    const snapshot = { isPrivate: this.info ? !!this.info.isPrivate : isPrivate, branch: adapter.branch };
+    try {
+      stage('delete', 0, 'Deleting the repository…');
+      await adapter.deleteRepo();
+      stage('create', 0.2, 'Recreating it empty…');
+      await adapter.createRepo({ name: adapter.repo, isPrivate: snapshot.isPrivate });
+      if (adapter.branch) adapter.branch = snapshot.branch || adapter.branch; // keep the same branch name
+      stage('upload', 0.3, `Uploading ${held.length} files…`);
+      const result = await adapter.rebuildFromFiles(held, {
+        branch: snapshot.branch,
+        onProgress: (f) => stage('upload', 0.3 + f * 0.7, `Uploading ${held.length} files…`),
+      });
+      this.info = await adapter.test();
+      await this.refresh();
+      stage('done', 1, 'Rebuilt.');
+      return { ...result, fileCount: held.length, totalBytes, skipped: held.length - result.uploaded };
+    } catch (err) {
+      err.rebuildInterrupted = keepHistoryOnFailure;
+      err.heldFiles = held; // the caller can offer a ZIP export so nothing is lost
+      throw err;
+    }
+  }
+
+  /** Download the whole vault as one ZIP (raw stored bytes — encrypted files stay encrypted). */
+  async exportZip({ onProgress = null, decrypt = false, password = null } = {}) {
+    const files = [];
+    const source = this.entries.filter((e) => !e.system);
+    for (let i = 0; i < source.length; i++) {
+      const entry = source[i];
+      if (onProgress) onProgress({ phase: 'read', fraction: i / source.length, detail: entry.displayName });
+      const bytes = await this.readBytes(entry);
+      if (decrypt && entry.encrypted) {
+        const key = await this.ensureKey(password);
+        const { data, header } = await decryptBytes(bytes, key);
+        files.push({ name: joinPath(entry.folder, header.name || entry.displayName), data });
+      } else {
+        files.push({ name: entry.path, data: bytes });
+      }
+    }
+    if (onProgress) onProgress({ phase: 'zip', fraction: 0.95, detail: 'Building the archive…' });
+    const zip = createZip(files, { onProgress: (f) => onProgress && onProgress({ phase: 'zip', fraction: 0.95 + f * 0.05, detail: 'Building the archive…' }) });
+    return { ...zip, name: exportName(), decrypted: !!decrypt };
+  }
+
   /** Shareable URL: public repos get a raw link, private repos only work in-app. */
   shareUrl(entry, appUrl = '') {
     if (this.info && !this.info.isPrivate && this.adapter.publicUrl) return this.adapter.publicUrl(entry.path);
@@ -1814,6 +2147,7 @@ class Vault {
  * All the interesting logic lives in ../core/* and ../adapters/*, which are
  * DOM-free and unit-tested.
  */
+
 
 
 
@@ -2472,7 +2806,7 @@ function wire() {
   window.addEventListener('keydown', (e) => {
     if (!$('lock-screen').hidden) return; // the lock screen owns the keyboard
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-    if (e.key === 'Escape') { closeViewer(); show($('confirm'), false); return; }
+    if (e.key === 'Escape') { closeViewer(); show($('confirm'), false); closeStorage(); return; }
     if (typing) return;
     if (e.key === '/') { e.preventDefault(); $('search').focus(); }
     if (e.key === 'u' && state.vault) { e.preventDefault(); $('file-input').click(); }
@@ -2529,7 +2863,9 @@ function wire() {
     const yes = await confirmDialog(
       'Delete this file?',
       `<b>${escapeHtml(entry.displayName)}</b> (${formatBytes(entry.size)}) will be removed from the repo's latest commit.
-       Note: git keeps history — the blob stays in the object store, so a <2 GB repo does not shrink. See the README for reclaiming space.`,
+       <br><br>Be clear about what that does and does not do: git keeps every version it has ever stored, so
+       <b>the bytes still occupy space</b> and the old copy is still fetchable by its SHA. To actually reclaim
+       it, open <b>Storage</b> and fold the history — or delete and rebuild the repository.`,
       'Delete',
     );
     if (!yes) return;
@@ -2540,6 +2876,16 @@ function wire() {
       toast('Deleted from the branch');
     } catch (err) { toast('Delete failed: ' + err.message); }
   });
+
+  // ---- storage & history
+  $('storage-btn').addEventListener('click', openStorage);
+  $('storage-close').addEventListener('click', closeStorage);
+  $('storage-modal').addEventListener('click', (e) => { if (e.target === $('storage-modal')) closeStorage(); });
+  $('purge-confirm').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('purge-btn').click(); });
+  $('rebuild-confirm').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rebuild-btn').click(); });
+  $('purge-btn').addEventListener('click', runPurge);
+  $('rebuild-btn').addEventListener('click', runRebuild);
+  $('export-btn').addEventListener('click', () => runExport({}));
 
   // ---- tray
   $('tray-close').addEventListener('click', () => showTray(false));
@@ -2866,6 +3212,154 @@ function mount() {
 if (typeof document !== 'undefined' && document.getElementById && document.getElementById('setup-screen')) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
+}
+
+/* --------------------------------------------------- storage, history, reclaim */
+
+function closeStorage() { show($('storage-modal'), false); }
+
+function storageProgress(text) { $('storage-progress').textContent = text || ''; }
+
+async function openStorage() {
+  if (!state.vault) return toast('Connect a repository first');
+  show($('storage-modal'), true);
+  storageProgress('Reading the repository…');
+  alertBox($('storage-warnings'), null, '');
+  alertBox($('storage-notes'), null, '');
+  try {
+    const info = await state.vault.historyInfo();
+    const stats = [
+      ['Files', String(info.fileCount)],
+      ['Your files', formatBytes(info.logicalBytes)],
+      ...(info.reportedBytes ? [['GitHub says', formatBytes(info.reportedBytes)]] : []),
+      ['Commits', String(info.commitCount)],
+      ['Branches', String(Math.max(1, info.branches.length))],
+      ['Tags', String(info.tags.length)],
+    ];
+    $('storage-stats').innerHTML = stats
+      .map(([k, v]) => `<span class="chip"><b>${escapeHtml(v)}</b>&nbsp;${escapeHtml(k)}</span>`)
+      .join('');
+
+    const notes = [];
+    if (info.commitCount <= 1) {
+      notes.push('This repository has a single commit, so folding the history would free nothing. Adding, replacing and deleting files always adds commits — that is where reclaimable space comes from.');
+    } else {
+      notes.push(`${info.commitCount} commits hold ${info.fileCount} live file${info.fileCount === 1 ? '' : 's'}. Every earlier version of those files — and every file you have deleted — is still stored inside them.`);
+    }
+    alertBox($('storage-notes'), 'info', notes.join(' '));
+
+    const warnings = [];
+    const others = (info.branches || []).filter((b) => b !== info.branch);
+    if (others.length) warnings.push(`Other branches (${others.map((b) => escapeHtml(b)).join(', ')}) keep their own commits alive: folding ${escapeHtml(info.branch)} will not free them. Delete those branches too if you want one clean history.`);
+    if ((info.tags || []).length) warnings.push(`${info.tags.length} tag${info.tags.length === 1 ? '' : 's'} also hold commits reachable — tags point straight at old objects.`);
+    if (!info.hasAdmin) warnings.push('This token has no <b>Administration</b> permission, so the delete-and-rebuild path below is unavailable. Add "Administration: Read and write" to the token (fine-grained) or use a classic token with <code>delete_repo</code>, then reconnect.');
+    alertBox($('storage-warnings'), 'warn', warnings.join('<br>'));
+
+    const canRebuild = info.hasAdmin && state.vault.adapter && state.vault.adapter.id === 'github';
+    $('rebuild-btn').disabled = !canRebuild;
+    $('rebuild-confirm').disabled = !canRebuild;
+    $('purge-btn').disabled = !info.supported || info.commitCount <= 1;
+    storageProgress('');
+  } catch (err) {
+    storageProgress('');
+    alertBox($('storage-warnings'), 'warn', 'Could not read the repository: ' + escapeHtml(err.message));
+  }
+}
+
+async function runPurge() {
+  if (!matchPhrase($('purge-confirm').value, PURGE_PHRASE)) return toast(`Type ${PURGE_PHRASE} exactly to confirm`);
+  const info = await state.vault.historyInfo().catch(() => null);
+  if (info && info.commitCount <= 1) return toast('Nothing to fold — there is only one commit');
+  $('purge-btn').disabled = true;
+  storageProgress('Folding history…');
+  try {
+    const result = await state.vault.purgeHistory();
+    render();
+    const summary = summarisePurge({ before: { commitCount: result.before } });
+    $('purge-confirm').value = '';
+    toast(summary.headline);
+    await openStorage();
+    storageProgress(`${result.before} commits folded into 1. The files are untouched; the old commits are unreachable and will be freed by GitHub's garbage collection, not necessarily immediately.`);
+  } catch (err) {
+    storageProgress('');
+    alertBox($('storage-warnings'), 'warn', 'Fold failed: ' + escapeHtml(err.message));
+  } finally {
+    $('purge-btn').disabled = false;
+  }
+}
+
+async function runExport({ decrypt = false } = {}) {
+  if (!state.vault) return;
+  $('export-btn').disabled = true;
+  try {
+    const { blob, name, count, skipped, decrypted } = await state.vault.exportZip({
+      decrypt,
+      password: decrypt ? state.password : null,
+      onProgress: ({ phase, fraction, detail }) => {
+        const pct = Number.isFinite(fraction) ? ` ${Math.round(fraction * 100)}%` : '';
+        storageProgress(`${phase === 'zip' ? 'Packing the ZIP' : 'Fetching files'}${pct}${detail ? ' — ' + detail : ''}`);
+      },
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    $('export-note').textContent = `${count} files · ${formatBytes(blob.size)}${skipped.length ? ` · ${skipped.length} skipped` : ''}${decrypted ? ' · decrypted' : ''}`;
+    storageProgress('');
+    toast(`Exported ${count} files as ${name}`);
+  } catch (err) {
+    storageProgress('');
+    alertBox($('storage-warnings'), 'warn', 'Export failed: ' + escapeHtml(err.message));
+  } finally {
+    $('export-btn').disabled = false;
+  }
+}
+
+async function runRebuild() {
+  if (!matchPhrase($('rebuild-confirm').value, REBUILD_PHRASE)) return toast(`Type ${REBUILD_PHRASE} exactly to confirm`);
+
+  const yes = await confirmDialog(
+    'Delete and rebuild the repository?',
+    `The repository <b>${escapeHtml(state.vault.info.repo)}</b> is deleted from GitHub and immediately created again, empty, with a single commit holding your current files.
+     <br><br>This is irreversible and it is the only way to reclaim space <b>immediately</b>. Anything not in the current vault — other branches, tags, old commits — is gone for good.
+     <br><br>Your files are read into this tab <b>before</b> the delete, and you get a ZIP if the re-upload fails.`,
+    'Delete & rebuild',
+  );
+  if (!yes) return;
+
+  $('rebuild-btn').disabled = true;
+  try {
+    const result = await state.vault.compact({
+      isPrivate: state.vault.info.isPrivate !== false,
+      onProgress: ({ phase, fraction, detail }) => {
+        const label = {
+          download: 'Reading files into this tab', delete: 'Deleting the repository',
+          create: 'Recreating it empty', upload: 'Re-uploading', done: 'Finishing',
+        }[phase] || phase;
+        const pct = Number.isFinite(fraction) ? ` ${Math.round(fraction * 100)}%` : '';
+        storageProgress(`${label}${pct}${detail ? ' — ' + detail : ''}`);
+      },
+    });
+    render();
+    const summary = summariseRebuild({ fileCount: result.uploaded, totalBytes: state.entries.reduce((n, e) => n + (e.size || 0), 0) });
+    toast(summary.headline);
+    $('rebuild-confirm').value = '';
+    await openStorage();
+    storageProgress(`${summary.headline}. ${summary.detail}`);
+  } catch (err) {
+    storageProgress('');
+    const held = err.heldFiles || [];
+    const html = escapeHtml(err.message) + (err.rebuildInterrupted
+      ? `<br><br><b>You are in the middle of a rebuild and the files are held in this tab (${held.length}).</b> Download them as a ZIP now.`
+      : '');
+    alertBox($('storage-warnings'), 'warn', html);
+    if (err.rebuildInterrupted && held.length) {
+      await runExport({}).catch(() => {});
+    }
+  } finally {
+    $('rebuild-btn').disabled = false;
+  }
 }
 
 /* expose the core for console tinkering and the bundle integrity test */

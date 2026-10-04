@@ -29,7 +29,11 @@ There is no "RepoVault server" anywhere. The whole app is static files you can h
 | Push size | 2 GB per push | We commit one file at a time, so this never applies. |
 | Bandwidth | "significantly excessive" gets throttled; see [AUP §9 Excessive Bandwidth Use](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies) | Fine for personal use; don't run a CDN off it. |
 | Free private repos | Unlimited, but private files need a token to read | Encryption handles the alternative: public repo + ciphertext. |
-| `git gc` | Deleted blobs stay in history, so the repo doesn't shrink | Documented below — see *Reclaiming space*. |
+| **History counts too** | Deleted and replaced files keep occupying space | Until you rewrite history **and** GitHub garbage-collects. See *Reclaiming space* below. |
+| Git LFS (not used here) | Free plan: 1 GiB storage + 1 GiB/month bandwidth | Plain git keeps this app simple and dependency-free; LFS would *reduce* your budget, not raise it. |
+| `git gc` | GitHub never GCs on a force-push | So a purge frees space on GitHub's schedule, not yours — the rebuild path is the guaranteed one. |
+
+**Is git unlimited? No.** Git the *software* has no storage limit — it is a content-addressed store on a disk, so it grows forever. But RepoVault does not store files in git-the-software, it stores them in **your GitHub repository**, and GitHub's repositories are absolutely limited: 100 MiB per file is a hard server-side block, and the `1 GB` figure is GitHub's own **recommended** repository size (with 5 GB "strongly recommended" as the ceiling before they get in touch). The 1 GB is a recommendation, not a switch that flips at 1.01 GB — but it is the number to design around, and the honest answer is that "unlimited GitHub storage" is a myth with a traffic-throttling policy attached.
 
 **Per-repo budget:** ~1 GB comfortable, 5 GB as a practical ceiling, 100 MB max per file. That's a genuinely useful personal drive (photos, documents, installers, project archives) with zero cost and zero ops. If you need *terabytes* of hot storage with public URLs, the `StorageAdapter` interface (below) is designed so you can drop in Cloudflare R2 or S3 in ~60 lines.
 
@@ -40,7 +44,8 @@ There is no "RepoVault server" anywhere. The whole app is static files you can h
 1. **Create a repo** called `my-vault` (private if you want privacy for free, public if you'll use the built-in encryption).
 2. **Create a fine-grained token:** GitHub → *Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token*
    - **Repository access:** Only select repositories → your vault repo
-   - **Permissions:** Contents → **Read and write** (nothing else)
+   - **Permissions:** Contents → **Read and write** (nothing else is needed for day-to-day use)
+   - *Only if you want tier 3 of the reclaim paths* (**Delete & rebuild**): add **Administration → Read and write**. A classic token needs the `delete_repo` scope for the same thing.
    - Expiry: your call; short is safer, longer is convenient.
 3. **Open RepoVault** (`repovault.html` works straight from disk — no server needed) and paste *owner / repo / token*.
 4. Drop a file in. The first upload bootstraps an empty repo automatically (it writes `.vault/init.json` and creates the first commit for you).
@@ -138,7 +143,7 @@ Why chunked: a 90 MB video never needs a single giant GCM call, memory stays fla
 npm test        # or: node tools/run-tests.mjs
 ```
 
-**81 tests, zero dependencies, no network.** The GitHub adapter is exercised against `tests/helpers/mock-github.mjs`, a mock that enforces real semantics — empty repos have no refs, overwriting needs a sha, ref updates must fast-forward, blobs are immutable. The service worker is *executed* in a sandbox with stubbed `caches`/`fetch` to prove what it refuses to intercept.
+**106 tests, zero dependencies, no network.** The GitHub adapter is exercised against `tests/helpers/mock-github.mjs`, a mock that enforces real semantics — empty repos have no refs, overwriting needs a sha, ref updates must fast-forward, blobs are immutable. The service worker is *executed* in a sandbox with stubbed `caches`/`fetch` to prove what it refuses to intercept.
 
 ```
 utils  (11)   path traversal attempts, duplicate names, sanitisation, base64 at 200 KB,
@@ -163,6 +168,12 @@ pwa    (14)   manifest install fields + required icon sizes (files must exist),
 bundle  (6)   regenerates repovault.html from source, then executes it with no DOM:
               crypto round-trip + full vault workflow through the shipped artifact,
               and asserts a fresh build is byte-identical to the committed one
+reclaim (25)  pagination maths, typed-confirmation matching, refs that keep space
+              alive, ZIP bytes verified by Python's zipfile, orphan-commit purge
+              (files byte-identical, other branches untouched), rebuild-refuses-
+              above-512 MB, mid-rebuild failure hands back the held files, admin
+              permission surfaced, UI wiring for all three paths, and every
+              element id the controller touches actually exists in index.html
 ```
 
 CI runs all of that on Node 18/20/22 plus a "is `repovault.html` stale?" gate.
@@ -185,16 +196,31 @@ npm run dev                    # http://localhost:8000
 
 ## Reclaiming space
 
-Git is a history, not a delete button: removing a 200 MB video from the branch leaves the blob in the object store, so the repo doesn't shrink and GitHub still counts it. RepoVault says this in the delete dialog rather than pretending otherwise. To actually reclaim:
+Git is a history, not a delete button. Removing a 200 MB video from the branch leaves the blob in the object store: the repo does not shrink, GitHub still counts the bytes, and the file is *still fetchable by anyone who knows its SHA*. RepoVault says exactly that in the delete dialog instead of pretending otherwise — and then gives you three real paths, all of them in **Storage** in the header.
+
+| Tier | What it does | Space freed | Needs |
+| --- | --- | --- | --- |
+| **1 · Fold history** | Reads the current tree, creates one parentless commit from it, force-moves the branch to it. Files untouched, nothing re-uploaded, two API calls. | *Eventually.* The old commits become **unreachable**; GitHub frees them when it garbage-collects, which is not immediate and not guaranteed on your schedule. Old blobs stay fetchable **by SHA** until then. | Token with Contents: write |
+| **2 · Export ZIP** | Every file exactly as stored, as one archive (`repovault-YYYY-MM-DD.zip`). Encrypted files stay ciphertext unless you ask for decryption. | Nothing — it is your safety net before tier 3. | Password, for encrypted files |
+| **3 · Delete & rebuild** | Downloads every file into the tab **first**, deletes the repository, recreates it, and pushes a single root commit. | **All of it, instantly and certainly.** The old objects do not exist any more — not unreachable, gone. Old SHAs 404. | Token with **Administration: Read and write** (fine-grained) or `delete_repo` (classic) |
+
+Two things worth knowing before you press tier 3:
+
+- **It is irreversible.** Anything not in the current vault — other branches, tags, old commits, issues, stars, watchers — dies with the repository. The panel lists the branches and tags it can see and warns you about them.
+- **If the re-upload dies half-way** you are left with an empty repository and your files *in memory in the tab*. RepoVault keeps them, tells you, and hands you the ZIP automatically. Read the files into the browser first (tier 3 does that by design) so this is always recoverable.
+
+The equivalent by hand, if you would rather not use the app:
 
 ```bash
-git clone --mirror https://github.com/<you>/my-vault.git && cd my-vault.git
-git filter-repo --strip-blobs-bigger-than 10M    # or --path uploads/big.mp4 --invert-paths
-git reflog expire --expire=now --all && git gc --prune=now --aggressive
-git push --force
+# best-effort, in place: history becomes unreachable, GitHub frees it when it gets round to it
+git checkout --orphan clean && git add -A && git commit -m "fold history"
+git branch -M clean main && git push --force origin main
+
+# guaranteed: no repository, no history
+#   delete it in Settings → Danger zone, recreate it, push the files back
 ```
 
-(With great power: that rewrites history. Fine for a personal vault, never for a shared repo.)
+GitHub's own guidance for removing sensitive data says the same thing: rewriting history makes objects unfetchable by normal means but **not** deleted, and you have to ask Support to expunge them. Forks and `refs/pull/*` keep data alive independently. That is why tier 3 exists and why nothing in this app promises instant reclamation from a force-push.
 
 ## Security notes
 
